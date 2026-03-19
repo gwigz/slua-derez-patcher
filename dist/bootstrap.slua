@@ -1,0 +1,32 @@
+--[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+--- Must match the PIN used by the patcher script.
+local PIN = 87654321
+--- Shared comm channel for the patcher/bootstrap protocol.
+local COMM_CHANNEL = -47123
+--- Active listen handle, or 0 when not listening.
+local listenHandle = 0
+ll.SetRemoteScriptAccessPin(PIN)
+LLEvents:on(
+    "on_rez",
+    function(startParam)
+        if startParam == PIN then
+            if listenHandle ~= 0 then
+                ll.ListenRemove(listenHandle)
+            end
+            listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
+            ll.RegionSay(COMM_CHANNEL, "pinned")
+        end
+    end
+)
+LLEvents:on(
+    "listen",
+    function(channel, name, id, message)
+        if channel == COMM_CHANNEL and message == "done" then
+            ll.RegionSayTo(id, COMM_CHANNEL, "ready")
+            if listenHandle ~= 0 then
+                ll.ListenRemove(listenHandle)
+                listenHandle = 0
+            end
+        end
+    end
+)

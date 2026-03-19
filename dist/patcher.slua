@@ -1,0 +1,416 @@
+--[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+
+local ____modules = {}
+local ____moduleCache = {}
+local ____originalRequire = require
+local function require(file, ...)
+    if ____moduleCache[file] then
+        return ____moduleCache[file].value
+    end
+    if ____modules[file] then
+        local module = ____modules[file]
+        local value = nil
+        if (select("#", ...) > 0) then value = module(...) else value = module(file) end
+        ____moduleCache[file] = { value = value }
+        return value
+    else
+        if ____originalRequire then
+            return ____originalRequire(file)
+        else
+            error("module '" .. file .. "' not found")
+        end
+    end
+end
+____modules = {
+["src.patcher.inventory"] = function(...) 
+--[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+local ____exports = {}
+--- Matches an object name against a wildcard pattern.
+-- 
+-- Supported patterns:
+--   `"*"`        Matches everything
+--   `"prefix*"`  Matches names starting with prefix
+--   `"*suffix"`  Matches names ending with suffix
+--   `"exact"`    Matches the exact name (no wildcard)
+function ____exports.wildcardMatches(self, objectName, pattern)
+    if pattern == "*" then
+        return true
+    end
+    local starIdx = (string.find(pattern, "*", 1, true) or 0) - 1
+    if starIdx < 0 then
+        return objectName == pattern
+    end
+    if starIdx == 0 then
+        local suffix = string.sub(pattern, 2)
+        return #objectName >= #suffix and string.sub(objectName, #objectName - #suffix + 1) == suffix
+    end
+    return string.find(
+        objectName,
+        string.sub(pattern, 1, starIdx),
+        1,
+        true
+    ) == 1
+end
+--- Matches an object name against one or more comma-separated wildcard
+-- patterns. Returns true if any pattern matches.
+function ____exports.patternMatches(self, objectName, pattern)
+    if string.find(pattern, ",", 1, true) ~= nil then
+        for ____, part in ipairs(string.split(pattern, ",")) do
+            if ____exports.wildcardMatches(nil, objectName, part) then
+                return true
+            end
+        end
+        return false
+    end
+    return ____exports.wildcardMatches(nil, objectName, pattern)
+end
+--- Checks whether an inventory item targets the given object.
+-- 
+-- Items use a naming convention with a `/` separator:
+--   `"ObjectName/script"`    Exact match on object name
+--   `"{pattern}/script"`     Wildcard or comma pattern match
+-- 
+-- Returns false for items without a `/` separator.
+function ____exports.matchesObject(self, name, objectName)
+    local slashIdx = (string.find(name, "/", 1, true) or 0) - 1
+    if slashIdx < 0 then
+        return false
+    end
+    local prefix = string.sub(name, 1, slashIdx)
+    if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
+        return ____exports.patternMatches(
+            nil,
+            objectName,
+            string.sub(prefix, 2, #prefix - 1)
+        )
+    end
+    return prefix == objectName
+end
+--- Returns the names of all object-type items in the prim's inventory.
+function ____exports.getObjectNames(self)
+    local names = {}
+    local count = ll.GetInventoryNumber(INVENTORY_OBJECT)
+    do
+        local i = 1
+        while i <= count do
+            names[#names + 1] = ll.GetInventoryName(INVENTORY_OBJECT, i)
+            i = i + 1
+        end
+    end
+    return names
+end
+--- Collects all inventory items targeting the given object, separated into
+-- scripts and non-script items. Excludes the patcher script itself and
+-- any object-type inventory entries.
+function ____exports.getItemsForObject(self, selfName, objectName)
+    local scripts = {}
+    local items = {}
+    local count = ll.GetInventoryNumber(INVENTORY_ALL)
+    do
+        local i = 1
+        while i <= count do
+            local name = ll.GetInventoryName(INVENTORY_ALL, i)
+            local itemType = ll.GetInventoryType(name)
+            if name ~= selfName and itemType ~= INVENTORY_OBJECT then
+                if ____exports.matchesObject(nil, name, objectName) then
+                    if itemType == INVENTORY_SCRIPT then
+                        scripts[#scripts + 1] = name
+                    else
+                        items[#items + 1] = name
+                    end
+                end
+            end
+            i = i + 1
+        end
+    end
+    return {scripts = scripts, items = items}
+end
+--- Strips the `ObjectName/` prefix, returning just the item's own name.
+function ____exports.targetItemName(self, fullName)
+    local idx = (string.find(fullName, "/", 1, true) or 0) - 1
+    return if idx < 0 then fullName else string.sub(fullName, idx + 1 + 1)
+end
+return ____exports
+ end,
+["src.patcher.commands"] = function(...) 
+--[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+local ____exports = {}
+local ____inventory = require("src.patcher.inventory")
+local getObjectNames = ____inventory.getObjectNames
+local getItemsForObject = ____inventory.getItemsForObject
+local targetItemName = ____inventory.targetItemName
+--- Handles the `patch` command.
+-- 
+-- When target is `"all"`, scans inventory for every object that has matching
+-- scripts or items and queues them all. Otherwise validates that the named
+-- object exists in inventory and queues it alone.
+function ____exports.handlePatch(self, selfName, target, startPatching)
+    if target == "all" then
+        local queue = {}
+        for ____, obj in ipairs(getObjectNames(nil)) do
+            local ____getItemsForObject_result_0 = getItemsForObject(nil, selfName, obj)
+            local scripts = ____getItemsForObject_result_0.scripts
+            local items = ____getItemsForObject_result_0.items
+            if #scripts > 0 or #items > 0 then
+                queue[#queue + 1] = obj
+            end
+        end
+        if #queue == 0 then
+            ll.OwnerSay("No patchable objects found, aborting.")
+            return
+        end
+        ll.OwnerSay(("Patching " .. tostring(#queue)) .. " object(s)...")
+        startPatching(nil, queue)
+    else
+        if ll.GetInventoryType(target) ~= INVENTORY_OBJECT then
+            ll.OwnerSay(("Object \"" .. target) .. "\" not found in inventory.")
+            return
+        end
+        startPatching(nil, {target})
+    end
+end
+--- Handles the `list` command.
+-- 
+-- Scans inventory and prints each patchable object with its associated
+-- scripts and items grouped by type.
+function ____exports.handleList(self, selfName)
+    local found = false
+    for ____, obj in ipairs(getObjectNames(nil)) do
+        local ____getItemsForObject_result_1 = getItemsForObject(nil, selfName, obj)
+        local scripts = ____getItemsForObject_result_1.scripts
+        local items = ____getItemsForObject_result_1.items
+        if #scripts > 0 or #items > 0 then
+            found = true
+            local line = obj .. ":"
+            if #scripts > 0 then
+                local scriptList = ""
+                for ____, s in ipairs(scripts) do
+                    if scriptList ~= "" then
+                        scriptList = scriptList .. ", "
+                    end
+                    scriptList = scriptList .. targetItemName(nil, s)
+                end
+                line = line .. " [scripts] " .. scriptList
+            end
+            if #items > 0 then
+                local itemList = ""
+                for ____, s in ipairs(items) do
+                    if itemList ~= "" then
+                        itemList = itemList .. ", "
+                    end
+                    itemList = itemList .. targetItemName(nil, s)
+                end
+                line = line .. " [items] " .. itemList
+            end
+            ll.OwnerSay(line)
+        end
+    end
+    if not found then
+        ll.OwnerSay("No patchable objects found.")
+    end
+end
+return ____exports
+ end,
+["src.patcher.effects"] = function(...) 
+--[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+local ____exports = {}
+local WHITE = vector.one
+--- Shows floating text above the patcher prim.
+function ____exports.setStatus(self, text)
+    ll.SetText(text, WHITE, 1)
+end
+--- Hides the floating text.
+function ____exports.clearStatus(self)
+    ll.SetText("", vector.zero, 0)
+end
+--- Emits a particle beam toward the target object being patched.
+function ____exports.startParticles(self, targetId)
+    ll.ParticleSystem({
+        PSYS_SRC_PATTERN,
+        PSYS_SRC_PATTERN_ANGLE_CONE_EMPTY,
+        PSYS_SRC_TARGET_KEY,
+        targetId,
+        PSYS_SRC_TEXTURE,
+        "1d8f5508-86ae-4131-9044-dbb9d06d3385",
+        PSYS_PART_START_COLOR,
+        vector.create(1, 1, 1),
+        PSYS_PART_START_ALPHA,
+        1,
+        PSYS_PART_START_SCALE,
+        vector.create(0.125, 0.125, 0),
+        PSYS_SRC_MAX_AGE,
+        0,
+        PSYS_PART_MAX_AGE,
+        3.1,
+        PSYS_SRC_BURST_RATE,
+        3.1,
+        PSYS_SRC_BURST_PART_COUNT,
+        1,
+        PSYS_PART_FLAGS,
+        bit32.bor(
+            bit32.bor(PSYS_PART_EMISSIVE_MASK, PSYS_PART_FOLLOW_SRC_MASK),
+            PSYS_PART_TARGET_LINEAR_MASK
+        )
+    })
+end
+--- Stops the particle beam.
+function ____exports.stopParticles(self)
+    ll.ParticleSystem({})
+end
+return ____exports
+ end,
+["src.patcher.index"] = function(...) 
+--[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+local ____exports = {}
+local ____inventory = require("src.patcher.inventory")
+local getItemsForObject = ____inventory.getItemsForObject
+local targetItemName = ____inventory.targetItemName
+local ____commands = require("src.patcher.commands")
+local handleList = ____commands.handleList
+local handlePatch = ____commands.handlePatch
+local ____effects = require("src.patcher.effects")
+local setStatus = ____effects.setStatus
+local clearStatus = ____effects.clearStatus
+local startParticles = ____effects.startParticles
+local stopParticles = ____effects.stopParticles
+--- Shared secret between patcher and bootstrap for `ll.RemoteLoadScriptPin`.
+local PIN = 87654321
+--- Owner chat channel for commands.
+local CMD_CHANNEL = 7
+--- Internal channel for patcher/bootstrap protocol messages.
+local COMM_CHANNEL = -47123
+--- This script's inventory name, used to avoid patching ourselves.
+local SELF_NAME = ll.GetScriptName()
+--- UUID of the object currently being patched.
+local currentObjectId
+--- Inventory name of the object currently being patched.
+local currentObjectName = ""
+--- Ordered list of object names waiting to be patched.
+local patchQueue = {}
+--- Current position in the patch queue (0-indexed).
+local queueIndex = 0
+--- Whether a patch operation is in progress. Prevents concurrent patching.
+local busy = false
+--- Handle for the per-object timeout timer, cleared on successful response.
+local timeoutTimer = nil
+--- Advances to the next object in the queue. Rezzes it with PIN, sets up a
+-- timeout, and waits for the bootstrap handshake. Clears state when the
+-- queue is exhausted.
+local function patchNext(self)
+    if queueIndex >= #patchQueue then
+        busy = false
+        patchQueue = {}
+        queueIndex = 0
+        clearStatus(nil)
+        return
+    end
+    currentObjectName = patchQueue[queueIndex + 1]
+    queueIndex = queueIndex + 1
+    local ____getItemsForObject_result_0 = getItemsForObject(nil, SELF_NAME, currentObjectName)
+    local scripts = ____getItemsForObject_result_0.scripts
+    local items = ____getItemsForObject_result_0.items
+    if #scripts == 0 and #items == 0 then
+        ll.OwnerSay(("No items found for " .. currentObjectName) .. ", skipping.")
+        patchNext(nil)
+        return
+    end
+    setStatus(
+        nil,
+        (((((((((currentObjectName .. "\n") .. tostring(#scripts)) .. " script(s), ") .. tostring(#items)) .. " item(s)") .. "\n[") .. tostring(queueIndex)) .. "/") .. tostring(#patchQueue)) .. "]"
+    )
+    currentObjectId = ll.RezObjectWithParams(
+        currentObjectName,
+        {
+            REZ_POS,
+            vector.create(0, 0, 1),
+            1,
+            0,
+            REZ_PARAM,
+            PIN
+        }
+    )
+    local timeoutSeconds = #scripts * 3.5 + 10
+    timeoutTimer = LLTimers:once(
+        timeoutSeconds,
+        function()
+            stopParticles(nil)
+            ll.OwnerSay(("Timeout waiting for " .. currentObjectName) .. ", derezing.")
+            ll.DerezObject(currentObjectId, DEREZ_DIE)
+            timeoutTimer = nil
+            patchNext(nil)
+        end
+    )
+end
+--- Initializes the queue and kicks off the first patch.
+local function startPatching(self, queue)
+    patchQueue = queue
+    queueIndex = 0
+    busy = true
+    patchNext(nil)
+end
+LLEvents:on(
+    "listen",
+    function(channel, _name, id, message)
+        if channel == CMD_CHANNEL then
+            if id ~= ll.GetOwner() then
+                return
+            end
+            local parts = string.split(message, " ")
+            local cmd = parts[1]
+            if cmd == "patch" then
+                if busy then
+                    ll.OwnerSay("Already patching, please wait.")
+                    return
+                end
+                local target = parts[2]
+                if not target or target == "" then
+                    ll.OwnerSay("Usage: patch <ObjectName> | patch all")
+                    return
+                end
+                handlePatch(nil, SELF_NAME, target, startPatching)
+            elseif cmd == "list" then
+                handleList(nil, SELF_NAME)
+            end
+        elseif channel == COMM_CHANNEL and busy then
+            if message == "pinned" and id == currentObjectId then
+                local ____getItemsForObject_result_1 = getItemsForObject(nil, SELF_NAME, currentObjectName)
+                local scripts = ____getItemsForObject_result_1.scripts
+                local items = ____getItemsForObject_result_1.items
+                for ____, item in ipairs(items) do
+                    ll.GiveInventory(currentObjectId, item)
+                end
+                startParticles(nil, currentObjectId)
+                for ____, script in ipairs(scripts) do
+                    setStatus(
+                        nil,
+                        ((((((currentObjectName .. "\nLoading ") .. targetItemName(nil, script)) .. "\n[") .. tostring(queueIndex)) .. "/") .. tostring(#patchQueue)) .. "]"
+                    )
+                    ll.RemoteLoadScriptPin(
+                        currentObjectId,
+                        script,
+                        PIN,
+                        1,
+                        0
+                    )
+                end
+                stopParticles(nil)
+                ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
+            elseif message == "ready" and id == currentObjectId then
+                if timeoutTimer then
+                    LLTimers:off(timeoutTimer)
+                    timeoutTimer = nil
+                end
+                ll.OwnerSay(currentObjectName .. " patched successfully, derezing to inventory.")
+                ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
+                patchNext(nil)
+            end
+        end
+    end
+)
+ll.Listen(CMD_CHANNEL, "", NULL_KEY, "")
+ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
+return ____exports
+ end,
+}
+local ____entry = require("src.patcher.index", ...)
+return ____entry
