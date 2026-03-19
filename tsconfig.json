@@ -8,11 +8,14 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "types": ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment"
   },
   "tstl": {
     "extension": "slua",
     "luaTarget": "Luau",
     "luaLibImport": "inline",
-    "luaPlugins": [{ "name": "@gwigz/slua-tstl-plugin" }],
-  },
+    "luaPlugins": [{ "name": "@gwigz/slua-tstl-plugin" }]
+  }
 }

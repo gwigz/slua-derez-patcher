@@ -1,6 +1,7 @@
 {
   "name": "slua-derez-patcher",
   "private": true,
+  "description": "Speed up development with bulk script and inventory updates across objects",
   "type": "module",
   "module": "index.ts",
   "scripts": {
@@ -17,8 +18,10 @@
     "@types/bun": "latest",
     "@types/node": "^25.5.0",
     "@typescript-to-lua/language-extensions": "^1.19.0",
+    "html-minifier-terser": "^7.2.0",
     "oxfmt": "^0.41.0",
     "oxlint": "^1.56.0",
+    "typed-htmx": "^0.3.1",
     "typescript-to-lua": "^1.34.0"
   },
   "peerDependencies": {

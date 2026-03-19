@@ -1,4 +1,4 @@
-import { getObjectNames, getItemsForObject, targetItemName } from "./inventory";
+import { getObjectNames, getItemsForObject } from "./inventory";
 
 /**
  * Handles the `patch` command.
@@ -28,8 +28,6 @@ export function handlePatch(
       return;
     }
 
-    ll.OwnerSay("Patching " + queue.length + " object(s)...");
-
     startPatching(queue);
   } else {
     if (ll.GetInventoryType(target) !== INVENTORY_OBJECT) {
@@ -38,53 +36,5 @@ export function handlePatch(
     }
 
     startPatching([target]);
-  }
-}
-
-/**
- * Handles the `list` command.
- *
- * Scans inventory and prints each patchable object with its associated
- * scripts and items grouped by type.
- */
-export function handleList(selfName: string) {
-  let found = false;
-
-  for (const obj of getObjectNames()) {
-    const { scripts, items } = getItemsForObject(selfName, obj);
-
-    if (scripts.length > 0 || items.length > 0) {
-      found = true;
-
-      let line = obj + ":";
-
-      if (scripts.length > 0) {
-        let scriptList = "";
-
-        for (const s of scripts) {
-          if (scriptList !== "") scriptList += ", ";
-          scriptList += targetItemName(s);
-        }
-
-        line += " [scripts] " + scriptList;
-      }
-
-      if (items.length > 0) {
-        let itemList = "";
-
-        for (const s of items) {
-          if (itemList !== "") itemList += ", ";
-          itemList += targetItemName(s);
-        }
-
-        line += " [items] " + itemList;
-      }
-
-      ll.OwnerSay(line);
-    }
-  }
-
-  if (!found) {
-    ll.OwnerSay("No patchable objects found.");
   }
 }

@@ -1,6 +1,6 @@
 # SLua Derez Patcher
 
-A hot-patching system for Second Life's SLua runtime, designed to simplify development on products that rez or attach items. Instead of manually updating scripts and inventory across multiple objects, a single "patcher" prim holds everything and pushes changes on command.
+Speed up development with bulk script and inventory updates across objects, controlled from a web UI. A single patcher prim holds everything and pushes changes on command.
 
 It rezzes objects, transfers scripts via `ll.RemoteLoadScriptPin` and other inventory (notecards, textures, sounds, etc.) via `ll.GiveInventory`, then derezes it back -- updating the object in-place.
 
@@ -10,11 +10,14 @@ Built with [TypeScriptToLua](https://typescripttolua.github.io/) and [`@gwigz/sl
 
 ### `dist/patcher.slua` - goes in the patcher prim
 
-Listens on channel `/7` for owner commands:
+On script start, requests an HTTP-in URL and prints it to owner chat. Open the URL in a browser to access the web UI dashboard where you can:
 
-- `/7 patch lantern.obj` patch a single object
-- `/7 patch all` patch every object with matching scripts
-- `/7 list` list patchable objects and their scripts/items
+- Browse patchable objects with their scripts and items
+- Select individual objects or use "Select All"
+- Patch selected objects or all at once
+- Watch live progress via long polling
+
+Chat command `/7 url` prints the HTTP-in URL again if needed.
 
 ### `dist/bootstrap.slua` - add to each patchable object
 
@@ -37,32 +40,89 @@ Extensions and casing are purely convention -- the matching is on the full inven
 
 ## How It Works
 
-1. Owner says `/7 patch lantern.obj`
-2. Patcher scans inventory for scripts and items matching `lantern.obj/*` and `{pattern}/*`
-3. Rezzes `lantern.obj` at the patcher's position
-4. Bootstrap in the object sets the remote script access pin, signals `pinned`
-5. Transfers non-script items (notecards, textures, etc.) via `ll.GiveInventory` (instant)
-6. Transfers scripts via `ll.RemoteLoadScriptPin` (3s forced delay each)
-7. Patcher signals `done`, bootstrap responds `ready`
-8. Patcher derezes the object back to inventory
+```mermaid
+sequenceDiagram
+    participant User as Browser
+    participant Patcher as Patcher Prim
+    participant Object as Rezzed Object
+
+    User->>Patcher: Select objects, click Patch
+    Patcher->>Patcher: Scan inventory for matching scripts & items
+
+    loop For each selected object
+        Patcher->>Object: Rez object at patcher position
+        Object->>Patcher: Set pin, signal pinned
+
+        opt Has non-script items
+            Patcher->>Object: ll.GiveInventory (instant)
+        end
+
+        loop For each script (3s delay each)
+            Patcher->>Object: ll.RemoteLoadScriptPin
+        end
+
+        Patcher->>Object: Signal done
+        Object->>Patcher: Signal ready
+        Patcher->>Object: Derez back to inventory
+        Patcher-->>User: Live progress update (long poll)
+    end
+```
 
 ## Project Structure
 
 ```
-├── build.ts                  Programmatic TSTL build script
+├── build.ts                  Build script (template compilation + TSTL)
 ├── src/
 │   ├── bootstrap.ts          Standalone bootstrap script
+│   ├── web/                  Build-time only (JSX → HTML strings)
+│   │   ├── jsx.ts            Custom JSX factory: h() → string
+│   │   ├── jsx.d.ts          JSX type declarations (with typed-htmx)
+│   │   └── template.tsx      Page shell and app fragment templates
 │   └── patcher/
-│       ├── index.ts          Entry point, state management, patch flow
-│       ├── commands.ts       Command handlers (patch, list)
+│       ├── index.ts          Entry point, HTTP-in routing, state, patch flow
+│       ├── http.ts           HTML fragment builders, form parser
+│       ├── commands.ts       Command handlers (patch all)
 │       ├── inventory.ts      Pattern matching and inventory queries
-│       └── effects.ts        Status text and particle effects
-└── dist/                     Compiled output (gitignored)
+│       ├── effects.ts        Status text and particle effects
+│       └── template.ts       Auto-generated HTML constants (gitignored)
+└── dist/
     ├── patcher.slua          Bundled patcher script
     └── bootstrap.slua        Standalone bootstrap script
 ```
 
-The patcher source is split across multiple files and bundled into a single `patcher.slua` using TSTL's `luaBundle`. Bootstrap compiles independently since it runs in a separate object.
+### Build Pipeline
+
+```mermaid
+flowchart TD
+    A(src/web/template.tsx) -->|Bun require| B(build.ts)
+    B -->|PageShell & AppFragment| C(HTML strings)
+    C -->|minify-html| D(src/patcher/template.ts)
+    D --> E(TSTL)
+    F(src/patcher/*.ts) --> E
+    E --> G(dist/patcher.slua)
+    H(src/bootstrap.ts) -->|TSTL| I(dist/bootstrap.slua)
+```
+
+### Web UI Stack
+
+The web UI is served entirely from SLua's HTTP-in (no external server):
+
+```mermaid
+graph TD
+    SLua(SLua HTTP-in) -->|HTML fragments| Browser
+    Browser --> CDN
+    CDN --> HTMX(HTMX)
+    CDN --> Alpine(Alpine.js)
+    CDN --> Pico(Pico CSS)
+    CDN --> Lucide(Lucide Icons)
+```
+
+- **[HTMX](https://htmx.org)** server-driven fragment swapping & long polling
+- **[Alpine.js](https://alpinejs.dev)** client-side checkbox state (select all, selection count)
+- **[Pico CSS](https://picocss.com)** classless dark-mode styling
+- **[Lucide Icons](https://lucide.dev)** icon set
+
+All loaded from CDN. The SLua script only serves HTML fragments.
 
 ## Setup
 

@@ -4,16 +4,24 @@ TypeScript project that transpiles to Luau for Second Life's SLua runtime using 
 
 ## Commands
 
-- `bun run build` compile TypeScript to Luau via `tstl`
+- `bun run build` compile templates + TypeScript to Luau via `tstl`
 - `bun run dev` watch mode
 - `bun run lint` lint with oxlint
 - `bun run lint:fix` lint and auto-fix
 - `bun run fmt` format with oxfmt
 - `bun run fmt:check` check formatting
 
+## Build Pipeline
+
+1. `build.ts` compiles JSX templates (`src/web/template.tsx`) into minified HTML string constants, writes `src/patcher/template.ts` (auto-generated, gitignored)
+2. TSTL bundles `src/patcher/` (including generated `template.ts`) into `dist/patcher.slua`
+3. Bootstrap compiles independently to `dist/bootstrap.slua`
+
+`src/web/` files are **build-time only** (run in Bun, never compiled by TSTL). `src/patcher/` files are **runtime** (compiled to Luau by TSTL). Do not put JSX/TSX files in `src/patcher/`.
+
 ## Writing TypeScript for SLua
 
-Source files go in `src/`. The plugin transpiles standard TypeScript patterns into native SLua/Luau equivalents automatically.
+Source files go in `src/patcher/`. The plugin transpiles standard TypeScript patterns into native SLua/Luau equivalents automatically.
 
 ### Event System
 
@@ -86,6 +94,9 @@ The plugin rewrites these TypeScript idioms into optimized Luau:
 
 - **`ll.*` index parameters are 1-based.** SLua follows Lua convention, not LSL's 0-based indexing. Use `for (let i = 1; i <= count; i++)` when calling `ll.GetInventoryName`, `ll.GetLinkName`, etc.
 - **Don't use `continue` in `for` loops.** TSTL compiles `for` to `while` loops in Luau. `continue` in a `while` loop skips the increment (`i++`), causing an infinite loop. Use nested `if` blocks instead.
+- **`tonumber()` inserts a spurious `nil` self arg.** The `@gwigz/slua-types` declaration for `tonumber` lacks `@noSelf`, so TSTL compiles `tonumber(hex, 16)` as `tonumber(nil, hex, 16)`. Avoid calling `tonumber` directly; use manual byte arithmetic or other workarounds.
+- **No `string.replaceAll` in Luau.** Use `str.split(old).join(new)` which compiles to `table.concat(string.split(...), ...)`.
+- **`string.gsub` callbacks get a `self` parameter.** TSTL adds `self` to callback functions passed to `string.gsub`. Use `this: void` or `@noSelf` on the callback, or avoid callbacks entirely.
 
 ### Things to Avoid
 
