@@ -18,15 +18,6 @@ import { setStatus, clearStatus, startParticles, stopParticles } from "./effects
 import { PAGE_SHELL, APP_FRAGMENT } from "./template";
 import { buildObjectList, buildStatusFragment, parseFormItems } from "./http";
 
-/** Shared secret between patcher and bootstrap for `ll.RemoteLoadScriptPin`. */
-const PIN = 87654321;
-
-/** Owner chat channel for commands. */
-const CMD_CHANNEL = 7;
-
-/** Internal channel for patcher/bootstrap protocol messages. */
-const COMM_CHANNEL = -47123;
-
 /** This script's inventory name, used to avoid patching ourselves. */
 const SELF_NAME = ll.GetScriptName();
 

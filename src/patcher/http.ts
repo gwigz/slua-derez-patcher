@@ -2,11 +2,11 @@ import { getObjectNames, getItemsForObject, targetItemName } from "./inventory";
 
 /** Escapes HTML special characters to prevent XSS. */
 function escapeHtml(s: string): string {
-  let r = s.replaceAll("&", "&amp;");
-  r = r.replaceAll("<", "&lt;");
-  r = r.replaceAll(">", "&gt;");
-  r = r.replaceAll('"', "&quot;");
-  return r;
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 /** Builds a single item row with checkbox, name, and type badge. */
@@ -172,7 +172,7 @@ function urlDecode(encoded: string) {
       const [match] = string.find(hex, "^%x%x$");
 
       if (match) {
-        parts.push(string.char(tonumber(hex, 16)));
+        parts.push(string.char(tonumber(hex, 16)!));
         i += 3;
       } else {
         parts.push(ch);

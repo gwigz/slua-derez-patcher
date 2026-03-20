@@ -7,12 +7,6 @@
  * the listener.
  */
 
-/** Must match the PIN used by the patcher script. */
-const PIN = 87654321;
-
-/** Shared comm channel for the patcher/bootstrap protocol. */
-const COMM_CHANNEL = -47123;
-
 /** Active listen handle, or 0 when not listening. */
 let listenHandle = 0;
 

@@ -1,8 +1,19 @@
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
---- Must match the PIN used by the patcher script.
-local PIN = 87654321
---- Shared comm channel for the patcher/bootstrap protocol.
+--[[
+Bootstrap script, loaded into target objects via `ll.RemoteLoadScriptPin`.
+
+On rez with the correct PIN, opens a listener on the comm channel and
+signals "pinned" to the patcher. Once the patcher finishes transferring
+scripts and items and sends "done", responds with "ready" and cleans up
+the listener.
+]]
+
+--- Internal channel for patcher/bootstrap protocol messages.
 local COMM_CHANNEL = -47123
+
+--- Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`.
+local PIN = 87654321
+
+--[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 --- Active listen handle, or 0 when not listening.
 local listenHandle = 0
 ll.SetRemoteScriptAccessPin(PIN)

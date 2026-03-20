@@ -1,11 +1,85 @@
 import type { Diagnostic } from "typescript";
 import * as tstl from "typescript-to-lua";
 import { minify } from "html-minifier-terser";
-import { watch } from "node:fs";
-import { writeFileSync } from "node:fs";
+import { watch, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import * as constants from "./src/constants";
 
 const WATCH = process.argv.includes("--watch");
+const GENERATED_HEADER = "--[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]";
+
+/** Extracts the leading JSDoc block from a source file and converts it to a Lua multiline comment. */
+function extractFileComment(sourcePath: string): string {
+  const source = readFileSync(resolve(sourcePath), "utf8");
+  const match = source.match(/^\/\*\*\n([\s\S]*?)\s*\*\//);
+
+  if (!match) return "";
+
+  const body = match[1]
+    .split("\n")
+    .map((line) => line.replace(/^\s*\* ?/, ""))
+    .join("\n")
+    .trim();
+
+  return `--[[\n${body}\n]]`;
+}
+
+/** Extracts JSDoc comments paired with their export names from constants.ts. */
+function getConstantComments(): Record<string, string> {
+  const source = readFileSync(resolve("src/constants.ts"), "utf8");
+  const comments: Record<string, string> = {};
+  const re = /\/\*\*\s*(.*?)\s*\*\/\s*\nexport const (\w+)/g;
+
+  let match;
+  while ((match = re.exec(source))) {
+    comments[match[2]] = match[1];
+  }
+
+  return comments;
+}
+
+/** Prepends file header comment and constants to a compiled .slua file. */
+function injectConstants(filePath: string, sourcePath: string, comments: Record<string, string>) {
+  const content = readFileSync(filePath, "utf8");
+  const header = extractFileComment(sourcePath);
+
+  const lines = Object.entries(constants)
+    .filter(([name]) => content.includes(name))
+    .map(([name, value]) => {
+      const comment = comments[name];
+      return comment ? `--- ${comment}\nlocal ${name} = ${value}` : `local ${name} = ${value}`;
+    });
+
+  const parts: string[] = [];
+
+  if (header) {
+    parts.push(header);
+  }
+
+  if (lines.length > 0) {
+    parts.push(lines.join("\n\n"));
+  }
+
+  parts.push(GENERATED_HEADER);
+
+  writeFileSync(filePath, parts.join("\n\n") + "\n" + content);
+}
+
+/** Generates src/constants.d.ts from the exports in src/constants.ts. */
+function generateConstantDeclarations(comments: Record<string, string>) {
+  const declarations = Object.entries(constants)
+    .map(([name, value]) => {
+      const comment = comments[name];
+      const decl = `declare const ${name}: ${typeof value};`;
+      return comment ? `/** ${comment} */\n${decl}` : decl;
+    })
+    .join("\n\n");
+
+  writeFileSync(
+    resolve("src/constants.d.ts"),
+    `// Auto-generated from constants.ts -- run \`bun dev\` to update\n\n${declarations}\n`,
+  );
+}
 
 /** Compiles JSX templates into a generated TypeScript module with string constants. */
 async function compileTemplates() {
@@ -61,11 +135,15 @@ function reportDiagnostics(diagnostics: readonly Diagnostic[]) {
 async function build() {
   let hasErrors = false;
 
-  // Step 1: Compile JSX templates to string constants
+  // Step 1: Generate constant declarations + compile JSX templates
+  const comments = getConstantComments();
+
+  generateConstantDeclarations(comments);
   await compileTemplates();
 
   // Step 2: Patcher bundle
   const patcherResult = tstl.transpileProject("tsconfig.json", {
+    noHeader: true,
     luaBundle: "patcher.slua",
     luaBundleEntry: resolve("src/patcher/index.ts"),
   });
@@ -75,20 +153,24 @@ async function build() {
   }
 
   // Bootstrap standalone
-  const bootstrapResult = tstl.transpileFiles([resolve("src/bootstrap.ts")], {
-    rootDir: resolve("src"),
-    outDir: resolve("dist"),
-    target: 99, // ESNext
-    module: 99, // ESNext
-    strict: true,
-    moduleDetection: 3, // Force
-    skipLibCheck: true,
-    types: ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
-    luaTarget: tstl.LuaTarget.Luau,
-    luaLibImport: tstl.LuaLibImportKind.Inline,
-    extension: "slua",
-    luaPlugins: [{ name: "@gwigz/slua-tstl-plugin" }],
-  } as tstl.CompilerOptions);
+  const bootstrapResult = tstl.transpileFiles(
+    [resolve("src/constants.d.ts"), resolve("src/bootstrap.ts")],
+    {
+      rootDir: resolve("src"),
+      outDir: resolve("dist"),
+      target: 99, // ESNext
+      module: 99, // ESNext
+      strict: true,
+      moduleDetection: 3, // Force
+      skipLibCheck: true,
+      types: ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
+      luaTarget: tstl.LuaTarget.Luau,
+      luaLibImport: tstl.LuaLibImportKind.Inline,
+      extension: "slua",
+      noHeader: true,
+      luaPlugins: [{ name: "@gwigz/slua-tstl-plugin" }],
+    } as tstl.CompilerOptions,
+  );
 
   if (reportDiagnostics(bootstrapResult.diagnostics)) {
     hasErrors = true;
@@ -97,6 +179,10 @@ async function build() {
   if (hasErrors) {
     return false;
   }
+
+  // Step 3: Inject constants at top of both .slua files
+  injectConstants(resolve("dist/patcher.slua"), "src/patcher/index.ts", comments);
+  injectConstants(resolve("dist/bootstrap.slua"), "src/bootstrap.ts", comments);
 
   console.log("Built dist/patcher.slua + dist/bootstrap.slua");
 

@@ -1,4 +1,28 @@
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
+--[[
+Patcher script. Rezzes objects from inventory, transfers scripts and items
+into them via `ll.RemoteLoadScriptPin`, then derezzes them back.
+
+Provides a web UI via HTTP-in for controlling patch operations.
+Chat command `/7 url` prints the HTTP-in URL.
+
+Protocol (COMM_CHANNEL):
+  1. Patcher rezzes object with PIN as start param
+  2. Bootstrap sets pin, sends "pinned"
+  3. Patcher transfers items and scripts, sends "done"
+  4. Bootstrap confirms with "ready"
+  5. Patcher derezzes object back to inventory
+]]
+
+--- Owner chat channel for commands (patcher only).
+local CMD_CHANNEL = 7
+
+--- Internal channel for patcher/bootstrap protocol messages.
+local COMM_CHANNEL = -47123
+
+--- Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`.
+local PIN = 87654321
+
+--[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 
 local ____modules = {}
 local ____moduleCache = {}
@@ -23,7 +47,6 @@ local function require(file, ...)
 end
 ____modules = {
 ["src.patcher.inventory"] = function(...) 
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
 local ____exports = {}
 --- Matches an object name against a wildcard pattern.
 -- 
@@ -133,7 +156,6 @@ end
 return ____exports
  end,
 ["src.patcher.commands"] = function(...) 
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
 local ____exports = {}
 local ____inventory = require("src.patcher.inventory")
 local getObjectNames = ____inventory.getObjectNames
@@ -170,7 +192,6 @@ end
 return ____exports
  end,
 ["src.patcher.effects"] = function(...) 
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
 local ____exports = {}
 local WHITE = vector.one
 --- Shows floating text above the patcher prim.
@@ -218,7 +239,6 @@ end
 return ____exports
  end,
 ["src.patcher.http"] = function(...) 
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
 local ____exports = {}
 local ____inventory = require("src.patcher.inventory")
 local getObjectNames = ____inventory.getObjectNames
@@ -226,11 +246,22 @@ local getItemsForObject = ____inventory.getItemsForObject
 local targetItemName = ____inventory.targetItemName
 --- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(self, s)
-    local r = ll.ReplaceSubString(s, "&", "&amp;", 0)
-    r = ll.ReplaceSubString(r, "<", "&lt;", 0)
-    r = ll.ReplaceSubString(r, ">", "&gt;", 0)
-    r = ll.ReplaceSubString(r, "\"", "&quot;", 0)
-    return r
+    return ll.ReplaceSubString(
+        ll.ReplaceSubString(
+            ll.ReplaceSubString(
+                ll.ReplaceSubString(s, "&", "&amp;", 0),
+                "<",
+                "&lt;",
+                0
+            ),
+            ">",
+            "&gt;",
+            0
+        ),
+        "\"",
+        "&quot;",
+        0
+    )
 end
 --- Builds a single item row with checkbox, name, and type badge.
 local function buildItemRow(self, fullItemName, typeClass, typeLabel)
@@ -363,14 +394,12 @@ end
 return ____exports
  end,
 ["src.patcher.template"] = function(...) 
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
 local ____exports = {}
 ____exports.PAGE_SHELL = "<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" data-theme=\"dark\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><base href=\"%BASE_URL%/\"/><title>Patcher</title><link rel=\"icon\" href=\"data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;📝&lt;/text&gt;&lt;/svg&gt;\"/><link rel=\"stylesheet\" href=\"//cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css\"/><script src=\"//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js\"></script><script defer=\"defer\" src=\"//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js\"></script><script src=\"//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js\"></script><style>body>main{max-width:580px;margin:0 auto;padding:1.5rem 1rem}.app-header{font-size:1.25rem;margin:0 0 1rem;padding-bottom:.75rem;border-bottom:1px solid var(--pico-muted-border-color);letter-spacing:-.02em}.toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}.toolbar label{font-size:.8rem;color:var(--pico-muted-color);display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer}.toolbar label input[type=checkbox]{margin:0}.toolbar-spacer{flex:1}.toolbar [type=submit],.toolbar button{width:auto;font-size:.75rem;font-weight:500;padding:.4rem .75rem;margin:0;white-space:nowrap}.toolbar svg{width:14px;height:14px;vertical-align:-2px}.obj-list{display:flex;flex-direction:column;gap:1px;background:var(--pico-muted-border-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--pico-border-radius);overflow:hidden;margin-bottom:1rem}.obj-group{background:var(--pico-card-background-color)}details{margin:0}details summary{list-style:none!important;padding:0}details summary::after{display:none!important}details summary::-webkit-details-marker{display:none!important}details summary::marker{display:none!important;content:none!important}details[open]>summary{margin-bottom:0!important}.obj-header{display:flex;align-items:center;gap:.5rem;padding:.6rem .75rem;cursor:pointer;user-select:none}.obj-header:hover{background:var(--pico-card-sectioning-background-color)}.obj-header input[type=checkbox]{margin:0;flex-shrink:0}.truncate{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.obj-name{font-size:.85rem;font-weight:600;flex:1}.obj-badge{font-size:.65rem;color:var(--pico-muted-color);background:var(--pico-card-sectioning-background-color);padding:.1rem .4rem;border-radius:3px;flex-shrink:0}.obj-toggle{color:var(--pico-muted-color);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .obj-toggle{transform:rotate(90deg)}.obj-items{border-top:1px solid var(--pico-muted-border-color);background:var(--pico-card-sectioning-background-color)}.item-row{display:flex;align-items:center;gap:.5rem;padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;color:var(--pico-muted-color);border-bottom:1px solid var(--pico-muted-border-color)}.item-row:last-child{border-bottom:none}.item-row input[type=checkbox]{margin:0;flex-shrink:0}.item-row .item-name{flex:1}.item-type{font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;padding:.05rem .3rem;border-radius:3px}.item-type-script{color:var(--pico-primary);background:var(--pico-primary-focus)}.item-type-item{color:var(--pico-muted-color);background:var(--pico-card-sectioning-background-color)}.empty-state{text-align:center;padding:2rem 1rem;color:var(--pico-muted-color)}#status{font-size:.8rem}#status progress{margin-top:.5rem}.status-header{display:flex;align-items:center;gap:.5rem}.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}.status-dot-ready{background:var(--pico-primary)}.status-dot-busy{background:#d29922;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}.status-log{margin-top:.5rem;max-height:160px;overflow-y:auto}.status-log p{margin:.1rem 0;color:var(--pico-muted-color);font-size:.75rem}.status-log p:last-child{color:var(--pico-color)}.status-pct{font-size:.75rem;color:var(--pico-muted-color);margin-left:auto}</style></head><body><main hx-get=\"app\" hx-trigger=\"load\" hx-swap=\"innerHTML\"><p aria-busy=\"true\">Loading</p></main><script>document.addEventListener(\"htmx:load\",()=>lucide.createIcons())</script></body></html>"
 ____exports.APP_FRAGMENT = "<h1 class=\"app-header\">Patcher</h1><form x-data=\"{\n  items: [],\n  allChecked: false,\n  get selectedCount() {\n    return this.items.length;\n  },\n  toggleAll() {\n    const boxes = [...$el.querySelectorAll('input[name=item]')];\n    const objBoxes = [...$el.querySelectorAll('.obj-header input[type=checkbox]')];\n    const details = [...$el.querySelectorAll('details')];\n    if (this.allChecked) {\n      this.items = [];\n      boxes.forEach(b =&gt; b.checked = false);\n      objBoxes.forEach(b =&gt; b.checked = false);\n      details.forEach(d =&gt; d.open = false);\n    } else {\n      this.items = boxes.map(b =&gt; { b.checked = true; return b.value; });\n      objBoxes.forEach(b =&gt; b.checked = true);\n      details.forEach(d =&gt; d.open = true);\n    }\n    this.allChecked = !this.allChecked;\n  },\n  toggleObject(objName) {\n    const boxes = [...$el.querySelectorAll('input[name=item]')]\n      .filter(b =&gt; b.value.startsWith(objName + '/'));\n    const allChecked = boxes.every(b =&gt; b.checked);\n    boxes.forEach(b =&gt; b.checked = !allChecked);\n    const det = boxes[0] &amp;&amp; boxes[0].closest('details');\n    if (det) det.open = true;\n    this.sync();\n  },\n  updateObjBoxes() {\n    $el.querySelectorAll('.obj-header input[type=checkbox]').forEach(b =&gt; {\n      const name = b.closest('.obj-group').querySelector('.obj-name').textContent;\n      const prefix = name + '/';\n      const selected = this.items.filter(i =&gt; i.startsWith(prefix)).length;\n      const total = $el.querySelectorAll('input[name=item][value^=&quot;' + prefix + '&quot;]').length;\n      b.checked = total &gt; 0 &amp;&amp; selected === total;\n      b.indeterminate = selected &gt; 0 &amp;&amp; selected &lt; total;\n    });\n  },\n  sync() {\n    this.items = [...$el.querySelectorAll('input[name=item]:checked')].map(b =&gt; b.value);\n    const allBoxes = $el.querySelectorAll('input[name=item]');\n    this.allChecked = this.items.length &gt; 0 &amp;&amp; this.items.length === allBoxes.length;\n    this.updateObjBoxes();\n  }\n}\"><div class=\"toolbar\"><label><input type=\"checkbox\" x-bind:checked=\"allChecked\" x-on:change=\"toggleAll()\"/> All</label><span class=\"toolbar-spacer\"></span><button type=\"submit\" hx-post=\"patch\" hx-target=\"#status\" hx-swap=\"innerHTML\" x-show=\"selectedCount &gt; 0\" x-bind:disabled=\"selectedCount === 0\"><i data-lucide=\"play\"></i> Patch</button><button type=\"button\" hx-post=\"patch-all\" hx-target=\"#status\" hx-swap=\"innerHTML\"><i data-lucide=\"layers\"></i> Patch All</button><button type=\"button\" class=\"secondary\" hx-get=\"objects\" hx-target=\"#objects\" hx-swap=\"innerHTML\"><i data-lucide=\"refresh-cw\"></i></button></div><div id=\"objects\" hx-get=\"objects\" hx-trigger=\"load\" hx-swap=\"innerHTML\" x-on:htmx:after-swap.camel=\"sync()\"><p aria-busy=\"true\">Scanning inventory</p></div></form><article id=\"status\"><div class=\"status-header\"><span class=\"status-dot status-dot-ready\"></span><span>Ready</span></div></article>"
 return ____exports
  end,
 ["src.patcher.index"] = function(...) 
---[[ Generated with https://github.com/TypeScriptToLua/TypeScriptToLua ]]
 -- Lua Library inline imports
 local function __TS__ArrayFilter(self, callbackfn, thisArg)
     local result = {}
@@ -431,12 +460,6 @@ function respondHtml(self, requestId, body)
     ll.SetContentType(requestId, CONTENT_TYPE_XHTML)
     ll.HTTPResponse(requestId, 200, body)
 end
---- Shared secret between patcher and bootstrap for `ll.RemoteLoadScriptPin`.
-local PIN = 87654321
---- Owner chat channel for commands.
-local CMD_CHANNEL = 7
---- Internal channel for patcher/bootstrap protocol messages.
-local COMM_CHANNEL = -47123
 --- This script's inventory name, used to avoid patching ourselves.
 local SELF_NAME = ll.GetScriptName()
 --- UUID of the object currently being patched.
