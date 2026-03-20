@@ -10,6 +10,15 @@ Built with [TypeScriptToLua](https://typescripttolua.github.io/) and [`@gwigz/sl
   <img src=".github/assets/ingame.webp" alt="Web UI and in-world patcher">
 </p>
 
+## Quick Start
+
+1. Drop `dist/patcher.slua` into your main prim
+2. Drop `dist/bootstrap.slua` into each object you want to patch
+3. Name your scripts, sounds, animations, etc. using the `ObjectName/ItemName` naming convention
+4. Drop those named scripts/items into the same prim as the patcher
+5. The patcher prints an HTTP-in URL to owner chat on start -- open it in a browser
+6. Select objects, click patch, and watch it go
+
 ## Scripts
 
 ### `dist/patcher.slua` - belongs in your main object
@@ -49,10 +58,10 @@ For each selected object, the patcher rezzes it at its own position, waits for t
 ```mermaid
 sequenceDiagram
     participant User as Browser
-    participant Patcher as Patcher Prim
+    participant Patcher as Main Object
     participant Object as Rezzed Object
 
-    User->>Patcher: Select objects, click Patch
+    User->>Patcher: Select objects, click patch
     Patcher->>Patcher: Scan inventory for matching scripts & items
 
     loop For each selected object
