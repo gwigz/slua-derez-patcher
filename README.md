@@ -6,10 +6,12 @@ Throw it all in one prim, child scripts set to not running, and let [`ll.RemoteL
 
 Built with [TypeScriptToLua](https://typescripttolua.github.io/) and [`@gwigz/slua-tstl-plugin`](https://github.com/gwigz/slua).
 
-<p align="center">
-  <img src=".github/assets/browser.webp" alt="Web UI dashboard" width="49%">
-  <img src=".github/assets/ingame.webp" alt="In-world patcher prim" width="49%">
-</p>
+<table>
+  <tr>
+    <td><img src=".github/assets/browser.webp" alt="Web UI dashboard"></td>
+    <td><img src=".github/assets/ingame.webp" alt="In-world patcher prim"></td>
+  </tr>
+</table>
 
 ## Scripts
 
