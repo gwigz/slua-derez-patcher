@@ -1,4 +1,7 @@
 {
+  "files.associations": {
+    "*.slua": "luau"
+  },
   "typescript.tsconfig": "tsconfig.editor.json",
   "editor.formatOnSave": true,
   "editor.defaultFormatter": "oxc.oxc-vscode",
