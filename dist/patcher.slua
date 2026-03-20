@@ -224,24 +224,12 @@ local ____inventory = require("src.patcher.inventory")
 local getObjectNames = ____inventory.getObjectNames
 local getItemsForObject = ____inventory.getItemsForObject
 local targetItemName = ____inventory.targetItemName
---- Escapes HTML special characters to prevent XSS. Uses split/join (no replaceAll in Luau).
+--- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(self, s)
-    local r = table.concat(
-        string.split(s, "&"),
-        "&amp;"
-    )
-    r = table.concat(
-        string.split(r, "<"),
-        "&lt;"
-    )
-    r = table.concat(
-        string.split(r, ">"),
-        "&gt;"
-    )
-    r = table.concat(
-        string.split(r, "\""),
-        "&quot;"
-    )
+    local r = ll.ReplaceSubString(s, "&", "&amp;", 0)
+    r = ll.ReplaceSubString(r, "<", "&lt;", 0)
+    r = ll.ReplaceSubString(r, ">", "&gt;", 0)
+    r = ll.ReplaceSubString(r, "\"", "&quot;", 0)
     return r
 end
 --- Builds a single item row with checkbox, name, and type badge.
@@ -314,15 +302,8 @@ function ____exports.buildStatusFragment(self, busy, index, total, log)
     return html
 end
 --- Decodes a single URL-encoded value (+ → space, %XX → char).
--- 
--- Uses manual hex-to-number conversion because TSTL inserts a spurious `nil`
--- self argument into `tonumber()` calls (slua-types missing
--- 
--- @noSelf ), so
--- `tonumber(hex, 16)` compiles to `tonumber(nil, hex, 16)` which is wrong.
--- 
 -- Collects parts into an array and joins once to avoid O(N²) string concat.
-local function urlDecode(encoded)
+local function urlDecode(self, encoded)
     local result = (string.gsub(encoded, "+", " "))
     local parts = {}
     local i = 1
@@ -333,24 +314,7 @@ local function urlDecode(encoded)
             local hex = string.sub(result, i + 1, i + 2)
             local match = string.find(hex, "^%x%x$")
             if match then
-                local n = 0
-                do
-                    local j = 1
-                    while j <= 2 do
-                        local byte = string.byte(hex, j)
-                        local digit
-                        if byte >= 48 and byte <= 57 then
-                            digit = byte - 48
-                        elseif byte >= 65 and byte <= 70 then
-                            digit = byte - 55
-                        else
-                            digit = byte - 87
-                        end
-                        n = n * 16 + digit
-                        j = j + 1
-                    end
-                end
-                parts[#parts + 1] = string.char(n)
+                parts[#parts + 1] = string.char(tonumber(hex, 16))
                 i = i + 3
             else
                 parts[#parts + 1] = ch
@@ -377,7 +341,10 @@ function ____exports.parseFormItems(self, body)
         else
             local key = string.sub(pair, 1, eqIdx)
             if key == "item" then
-                local fullName = urlDecode(string.sub(pair, eqIdx + 1 + 1))
+                local fullName = urlDecode(
+                    nil,
+                    string.sub(pair, eqIdx + 1 + 1)
+                )
                 local slashIdx = (string.find(fullName, "/", 1, true) or 0) - 1
                 if slashIdx >= 0 then
                     local objName = string.sub(fullName, 1, slashIdx)
@@ -606,10 +573,7 @@ LLEvents:on(
                 respondHtml(
                     nil,
                     requestId,
-                    table.concat(
-                        string.split(PAGE_SHELL, "%BASE_URL%"),
-                        httpUrl or ","
-                    )
+                    ll.ReplaceSubString(PAGE_SHELL, "%BASE_URL%", httpUrl, 0)
                 )
             elseif url == "/app" then
                 respondHtml(nil, requestId, APP_FRAGMENT)

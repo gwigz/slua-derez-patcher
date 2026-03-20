@@ -246,7 +246,7 @@ LLEvents.on("http_request", (requestId, method, body) => {
   if (method === "GET") {
     if (url === "" || url === "/") {
       // Inject runtime base URL so relative hx-get/hx-post paths resolve correctly
-      respondHtml(requestId, PAGE_SHELL.split("%BASE_URL%").join(httpUrl));
+      respondHtml(requestId, PAGE_SHELL.replaceAll("%BASE_URL%", httpUrl));
     } else if (url === "/app") {
       respondHtml(requestId, APP_FRAGMENT);
     } else if (url === "/objects") {

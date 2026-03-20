@@ -93,10 +93,6 @@ The plugin rewrites these TypeScript idioms into optimized Luau:
 ### TSTL Pitfalls
 
 - **`ll.*` index parameters are 1-based.** SLua follows Lua convention, not LSL's 0-based indexing. Use `for (let i = 1; i <= count; i++)` when calling `ll.GetInventoryName`, `ll.GetLinkName`, etc.
-- **Don't use `continue` in `for` loops.** TSTL compiles `for` to `while` loops in Luau. `continue` in a `while` loop skips the increment (`i++`), causing an infinite loop. Use nested `if` blocks instead.
-- **`tonumber()` inserts a spurious `nil` self arg.** The `@gwigz/slua-types` declaration for `tonumber` lacks `@noSelf`, so TSTL compiles `tonumber(hex, 16)` as `tonumber(nil, hex, 16)`. Avoid calling `tonumber` directly; use manual byte arithmetic or other workarounds.
-- **No `string.replaceAll` in Luau.** Use `str.split(old).join(new)` which compiles to `table.concat(string.split(...), ...)`.
-- **`string.gsub` callbacks get a `self` parameter.** TSTL adds `self` to callback functions passed to `string.gsub`. Use `this: void` or `@noSelf` on the callback, or avoid callbacks entirely.
 
 ### Things to Avoid
 

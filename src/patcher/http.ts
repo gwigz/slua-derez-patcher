@@ -1,11 +1,11 @@
 import { getObjectNames, getItemsForObject, targetItemName } from "./inventory";
 
-/** Escapes HTML special characters to prevent XSS. Uses split/join (no replaceAll in Luau). */
+/** Escapes HTML special characters to prevent XSS. */
 function escapeHtml(s: string): string {
-  let r = s.split("&").join("&amp;");
-  r = r.split("<").join("&lt;");
-  r = r.split(">").join("&gt;");
-  r = r.split('"').join("&quot;");
+  let r = s.replaceAll("&", "&amp;");
+  r = r.replaceAll("<", "&lt;");
+  r = r.replaceAll(">", "&gt;");
+  r = r.replaceAll('"', "&quot;");
   return r;
 }
 
@@ -155,17 +155,11 @@ export function buildStatusFragment(busy: boolean, index: number, total: number,
 
 /**
  * Decodes a single URL-encoded value (+ → space, %XX → char).
- *
- * Uses manual hex-to-number conversion because TSTL inserts a spurious `nil`
- * self argument into `tonumber()` calls (slua-types missing @noSelf), so
- * `tonumber(hex, 16)` compiles to `tonumber(nil, hex, 16)` which is wrong.
- *
  * Collects parts into an array and joins once to avoid O(N²) string concat.
  */
 function urlDecode(encoded: string) {
   let result = string.gsub(encoded, "+", " ")[0];
 
-  // Iterate byte-by-byte (1-indexed for Luau) replacing %XX sequences
   const parts: string[] = [];
   let i = 1;
   const len = result.length;
@@ -178,26 +172,7 @@ function urlDecode(encoded: string) {
       const [match] = string.find(hex, "^%x%x$");
 
       if (match) {
-        // Manual hex→number: 0-9 = 48-57, A-F = 65-70, a-f = 97-102
-        let n = 0;
-
-        for (let j = 1; j <= 2; j++) {
-          // string.byte returns number[] in types but number in Luau
-          const byte = string.byte(hex, j) as unknown as number;
-          let digit: number;
-
-          if (byte >= 48 && byte <= 57) {
-            digit = byte - 48;
-          } else if (byte >= 65 && byte <= 70) {
-            digit = byte - 55;
-          } else {
-            digit = byte - 87;
-          }
-
-          n = n * 16 + digit;
-        }
-
-        parts.push(string.char(n));
+        parts.push(string.char(tonumber(hex, 16)));
         i += 3;
       } else {
         parts.push(ch);
