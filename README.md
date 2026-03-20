@@ -40,6 +40,8 @@ Extensions and casing are purely convention -- the matching is on the full inven
 
 ## How It Works
 
+For each selected object, the patcher rezzes it at its own position, waits for the bootstrap script to set a pin and signal back, pushes any inventory items and scripts, then derezes it back. The browser gets live progress updates via long polling.
+
 ```mermaid
 sequenceDiagram
     participant User as Browser
@@ -67,6 +69,8 @@ sequenceDiagram
         Patcher-->>User: Live progress update (long poll)
     end
 ```
+
+Scripts have a 3 second delay between each load (`ll.RemoteLoadScriptPin` is throttled by the sim), but non-script inventory transfers via `ll.GiveInventory` are instant. The bootstrap script in each object handles the pin setup and signals readiness -- tweak it if your object needs time to initialize before being taken back.
 
 ## Project Structure
 
@@ -123,6 +127,19 @@ The stack is deliberately minimal, everything the script serves has to fit in SL
 [HTMX](https://htmx.org) fits perfectly: the server sends tiny HTML fragments instead of JSON, and the client swaps them in place with no build step or client-side routing. [Alpine.js](https://alpinejs.dev) covers the small amount of client state (checkbox toggles). [Pico CSS](https://picocss.com) gives a clean dark-mode look with zero classes, and [Lucide](https://lucide.dev) provides icons via `data-lucide` tags.
 
 Everything loads from CDN so the SLua script never serves static assets.
+
+### Routes
+
+All routes are defined in the `http_request` event handler in `src/patcher/index.ts`.
+
+| Method | Path         | Description                                   |
+| ------ | ------------ | --------------------------------------------- |
+| GET    | `/`          | Full page shell with base URL injected        |
+| GET    | `/app`       | App fragment (object list + controls)         |
+| GET    | `/objects`   | Object list with items and checkboxes         |
+| GET    | `/poll`      | Long poll -- held open until status changes   |
+| POST   | `/patch`     | Patch selected objects (form body with items) |
+| POST   | `/patch-all` | Patch all objects at once                     |
 
 ## Setup
 
