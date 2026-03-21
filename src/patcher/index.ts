@@ -1,20 +1,29 @@
 /**
- * Patcher script. Rezzes objects from inventory, transfers scripts and items
- * into them via `ll.RemoteLoadScriptPin`, then derezzes them back.
+ * SLua Derez Patcher — bulk inventory updater for Second Life objects.
  *
- * Provides a web UI via HTTP-in for controlling patch operations.
- * Chat command `/7 url` prints the HTTP-in URL.
+ * Place this script inside a prim alongside the objects you want to patch.
+ * Each object must contain a copy of the bootstrap script (bootstrap.slua).
+ * Scripts and items in the prim's inventory are matched to objects by naming
+ * convention — see inventory.ts for details.
  *
- * Protocol (COMM_CHANNEL):
+ * On startup, an HTTP-in URL is requested and printed to owner chat. Open
+ * it in a browser to access the web UI, or use chat commands on channel 7:
+ *   /7 url       - print the HTTP-in URL
+ *   /7 auto      - toggle auto-update on inventory changes
+ *   /7 auto <n>  - enable auto-update with <n> second debounce
+ *
+ * Patch protocol (COMM_CHANNEL):
  *   1. Patcher rezzes object with PIN as start param
  *   2. Bootstrap sets pin, sends "pinned"
  *   3. Patcher transfers items and scripts, sends "done"
  *   4. Bootstrap confirms with "ready"
  *   5. Patcher derezzes object back to inventory
+ *
+ * @link https://github.com/gwigz/slua-derez-patcher
  */
 import { getItemsForObject, getObjectNames, targetItemName } from "./inventory";
 import { setStatus, clearStatus, startParticles, stopParticles } from "./effects";
-import { pageShell, APP_FRAGMENT } from "./template";
+import { pageShell, appFragment } from "./template";
 import {
   buildObjectList,
   buildStatusFragment,
@@ -54,6 +63,12 @@ let patchItemFilter: Record<string, string[]> = {};
 /** Current position in the patch queue (0-indexed). */
 let queueIndex = 0;
 
+/** Total number of items (scripts + items) across all queued objects. */
+let totalItems = 0;
+
+/** Number of items transferred so far across all objects. */
+let completedItems = 0;
+
 /** Whether a patch operation is in progress. Prevents concurrent patching. */
 let busy = false;
 
@@ -63,6 +78,12 @@ let timeoutTimer: LLTimerCallback | null = null;
 /** Cached inventory scan for the current object, set by patchNext(), used by "pinned" handler. */
 let pendingScripts: string[] = [];
 let pendingItems: string[] = [];
+
+/** Index into pendingScripts for timer-based sequential loading. */
+let pendingScriptIdx = 0;
+
+/** Timer handle for sequential script loading, cleared on completion or timeout. */
+let scriptLoadTimer: LLTimerCallback | null = null;
 
 // --- HTTP state ---
 
@@ -112,11 +133,7 @@ function pushStatus(message: string) {
 
 /** Builds a status fragment from current patch state. */
 function statusFragment() {
-  // queueIndex is incremented when an object starts, not when it finishes.
-  // Show completed count (one less than current index) while busy.
-  const completed = busy ? math.max(0, queueIndex - 1) : 0;
-
-  return buildStatusFragment(busy, completed, patchQueue.length, statusLog);
+  return buildStatusFragment(busy, completedItems, totalItems, statusLog);
 }
 
 /** Responds to the held long-poll request with current status. */
@@ -132,6 +149,38 @@ function respondPoll() {
 
     pollTimer = null;
   }
+}
+
+/**
+ * Loads pending scripts one at a time using a timer chain.
+ * Yields to the event loop between loads so the browser can re-establish
+ * its long poll and receive real-time progress updates.
+ */
+function loadNextScript() {
+  if (pendingScriptIdx >= pendingScripts.length) {
+    stopParticles();
+    ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done");
+    return;
+  }
+
+  const script = pendingScripts[pendingScriptIdx];
+  const name = targetItemName(script);
+
+  setStatus(
+    currentObjectName + "\nLoading " + name + "\n[" + completedItems + "/" + totalItems + "]",
+  );
+
+  pushStatus(`Loading ${name} into ${currentObjectName}`);
+
+  ll.RemoteLoadScriptPin(currentObjectId, script, PIN, 1, 0);
+  completedItems++;
+  pendingScriptIdx++;
+
+  // Yield to event loop so the browser can re-establish the long poll
+  scriptLoadTimer = LLTimers.once(0.5, () => {
+    scriptLoadTimer = null;
+    loadNextScript();
+  });
 }
 
 /**
@@ -194,13 +243,13 @@ function patchNext() {
       pendingItems.length +
       " item(s)" +
       "\n[" +
-      queueIndex +
+      completedItems +
       "/" +
-      patchQueue.length +
+      totalItems +
       "]",
   );
 
-  pushStatus(`Rezzing ${currentObjectName}... [${queueIndex}/${patchQueue.length}]`);
+  pushStatus(`Rezzing ${currentObjectName}... [${completedItems}/${totalItems}]`);
 
   // Rez 1m above prim center with PIN as start param
   currentObjectId = ll.RezObjectWithParams(currentObjectName, [
@@ -218,6 +267,11 @@ function patchNext() {
   timeoutTimer = LLTimers.once(timeoutSeconds, () => {
     stopParticles();
 
+    if (scriptLoadTimer) {
+      LLTimers.off(scriptLoadTimer);
+      scriptLoadTimer = null;
+    }
+
     pushStatus(`Timeout waiting for ${currentObjectName}, derezing.`);
     ll.DerezObject(currentObjectId, DEREZ_DIE);
 
@@ -232,13 +286,29 @@ function startPatching(queue: string[], itemFilter?: Record<string, string[]>, r
   patchQueue = queue;
   patchItemFilter = itemFilter || {};
   queueIndex = 0;
+  completedItems = 0;
   busy = true;
+
+  // Pre-calculate total items across all queued objects
+  totalItems = 0;
+
+  for (const obj of queue) {
+    const { scripts, items } = getItemsForObject(SELF_NAME, obj);
+    const filter = patchItemFilter[obj];
+
+    if (filter && filter.length > 0) {
+      totalItems += scripts.filter((s) => filter.includes(s)).length;
+      totalItems += items.filter((it) => filter.includes(it)).length;
+    } else {
+      totalItems += scripts.length + items.length;
+    }
+  }
 
   if (resetLog) {
     statusLog = [];
   }
 
-  pushStatus(`Patching ${queue.length} object(s)...`);
+  pushStatus(`Patching ${totalItems} item(s) across ${queue.length} object(s)...`);
 
   patchNext();
 }
@@ -287,9 +357,9 @@ LLEvents.on("http_request", (requestId, method, body) => {
   if (method === "GET") {
     if (url === "" || url === "/") {
       // Inject runtime base URL so relative hx-get/hx-post paths resolve correctly
-      respondHtml(requestId, pageShell(httpUrl));
+      respondHtml(requestId, pageShell(httpUrl, ll.GetObjectName()));
     } else if (url === "/app") {
-      respondHtml(requestId, APP_FRAGMENT);
+      respondHtml(requestId, appFragment(ll.GetObjectName()));
     } else if (url === "/objects") {
       respondHtml(requestId, buildObjectList(SELF_NAME));
     } else if (url === "/poll") {
@@ -418,38 +488,22 @@ LLEvents.on("listen", (channel, _name, id, message) => {
     if (message === "pinned" && id === currentObjectId) {
       for (const item of pendingItems) {
         ll.GiveInventory(currentObjectId, item);
+        completedItems++;
       }
 
       startParticles(currentObjectId);
-
-      for (const script of pendingScripts) {
-        const name = targetItemName(script);
-
-        setStatus(
-          currentObjectName +
-            "\nLoading " +
-            name +
-            "\n[" +
-            queueIndex +
-            "/" +
-            patchQueue.length +
-            "]",
-        );
-
-        pushStatus(`Loading ${name} into ${currentObjectName}`);
-
-        ll.RemoteLoadScriptPin(currentObjectId, script, PIN, 1, 0);
-      }
-
-      stopParticles();
-
-      ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done");
+      pendingScriptIdx = 0;
+      loadNextScript();
       // Transfer complete, derez back to inventory
     } else if (message === "ready" && id === currentObjectId) {
       if (timeoutTimer) {
         LLTimers.off(timeoutTimer);
-
         timeoutTimer = null;
+      }
+
+      if (scriptLoadTimer) {
+        LLTimers.off(scriptLoadTimer);
+        scriptLoadTimer = null;
       }
 
       // Log without consuming the poll, let patchNext() deliver the
@@ -481,9 +535,8 @@ LLEvents.on("changed", (change) => {
   }
 });
 
-// TODO: look into this NULL_KEY typing issue
-ll.Listen(CMD_CHANNEL, "", NULL_KEY as unknown as uuid, "");
-ll.Listen(COMM_CHANNEL, "", NULL_KEY as unknown as uuid, "");
+ll.Listen(CMD_CHANNEL, "", NULL_KEY, "");
+ll.Listen(COMM_CHANNEL, "", NULL_KEY, "");
 
 ll.RequestURL();
 

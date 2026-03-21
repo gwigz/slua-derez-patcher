@@ -121,3 +121,23 @@ export function targetItemName(fullName: string) {
 
   return idx < 0 ? fullName : fullName.substring(idx + 1);
 }
+
+/** Inventory type constant -> short human-readable label. */
+const TYPE_LABELS: Record<number, string> = {
+  [INVENTORY_SCRIPT]: "script",
+  [INVENTORY_TEXTURE]: "texture",
+  [INVENTORY_SOUND]: "sound",
+  [INVENTORY_LANDMARK]: "landmark",
+  [INVENTORY_NOTECARD]: "notecard",
+  [INVENTORY_ANIMATION]: "animation",
+  [INVENTORY_GESTURE]: "gesture",
+  [INVENTORY_CLOTHING]: "clothing",
+  [INVENTORY_BODYPART]: "body part",
+  [INVENTORY_SETTING]: "setting",
+  [INVENTORY_MATERIAL]: "material",
+};
+
+/** Returns a short human-readable label for an inventory type constant. */
+export function inventoryTypeLabel(itemType: number) {
+  return TYPE_LABELS[itemType] || "item";
+}

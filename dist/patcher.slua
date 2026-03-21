@@ -1,16 +1,25 @@
 --[[
-Patcher script. Rezzes objects from inventory, transfers scripts and items
-into them via `ll.RemoteLoadScriptPin`, then derezzes them back.
+SLua Derez Patcher — bulk inventory updater for Second Life objects.
 
-Provides a web UI via HTTP-in for controlling patch operations.
-Chat command `/7 url` prints the HTTP-in URL.
+Place this script inside a prim alongside the objects you want to patch.
+Each object must contain a copy of the bootstrap script (bootstrap.slua).
+Scripts and items in the prim's inventory are matched to objects by naming
+convention — see inventory.ts for details.
 
-Protocol (COMM_CHANNEL):
+On startup, an HTTP-in URL is requested and printed to owner chat. Open
+it in a browser to access the web UI, or use chat commands on channel 7:
+  /7 url       - print the HTTP-in URL
+  /7 auto      - toggle auto-update on inventory changes
+  /7 auto <n>  - enable auto-update with <n> second debounce
+
+Patch protocol (COMM_CHANNEL):
   1. Patcher rezzes object with PIN as start param
   2. Bootstrap sets pin, sends "pinned"
   3. Patcher transfers items and scripts, sends "done"
   4. Bootstrap confirms with "ready"
   5. Patcher derezzes object back to inventory
+
+@link https://github.com/gwigz/slua-derez-patcher
 ]]
 
 --- Owner chat channel for commands (patcher only).
@@ -196,6 +205,24 @@ end
 function ____exports.targetItemName(self, fullName)
     local idx = (string.find(fullName, "/", 1, true) or 0) - 1
     return if idx < 0 then fullName else string.sub(fullName, idx + 1 + 1)
+end
+--- Inventory type constant -> short human-readable label.
+local TYPE_LABELS = {
+    [INVENTORY_SCRIPT] = "script",
+    [INVENTORY_TEXTURE] = "texture",
+    [INVENTORY_SOUND] = "sound",
+    [INVENTORY_LANDMARK] = "landmark",
+    [INVENTORY_NOTECARD] = "notecard",
+    [INVENTORY_ANIMATION] = "animation",
+    [INVENTORY_GESTURE] = "gesture",
+    [INVENTORY_CLOTHING] = "clothing",
+    [INVENTORY_BODYPART] = "body part",
+    [INVENTORY_SETTING] = "setting",
+    [INVENTORY_MATERIAL] = "material"
+}
+--- Returns a short human-readable label for an inventory type constant.
+function ____exports.inventoryTypeLabel(self, itemType)
+    return TYPE_LABELS[itemType] or "item"
 end
 return ____exports
  end,
@@ -387,10 +414,12 @@ return ____exports
  end,
 ["patcher.template"] = function(...) 
 local ____exports = {}
-function ____exports.pageShell(self, baseUrl)
-    return ("<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" data-theme=\"dark\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><base href=\"" .. baseUrl) .. "/\"/><title>Patcher</title><link rel=\"icon\" href=\"data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg'&gt;&lt;text y='1em'&gt;📝&lt;/text&gt;&lt;/svg&gt;\"/><link rel=\"stylesheet\" href=\"//cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css\"/><script src=\"//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js\"></script><script>/*<![CDATA[*/document.addEventListener(\"alpine:init\",()=>{Alpine.data(\"patcher\",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$el.querySelectorAll(\"input[name=item]\")],t=[...this.$el.querySelectorAll(\".m input[type=checkbox]\")],l=[...this.$el.querySelectorAll(\"details\")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),l.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),l.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$el.querySelectorAll(\"input[name=item]\")].filter(t=>t.value.startsWith(e+\"/\")),l=t.every(e=>e.checked);t.forEach(e=>e.checked=!l),t.length>0&&(t[0].closest(\"details\").open=!0),this.sync()},updateObjBoxes(){this.$el.querySelectorAll(\".m input[type=checkbox]\").forEach(e=>{const t=e.closest(\".u\").querySelector(\".y\").textContent+\"/\",l=this.items.filter(e=>e.startsWith(t)).length,c=this.$el.querySelectorAll('input[name=item][value^=\"'+t+'\"]').length;e.checked=c>0&&l===c,e.indeterminate=l>0&&l<c})},sync(){this.items=[...this.$el.querySelectorAll(\"input[name=item]:checked\")].map(e=>e.value);const e=this.$el.querySelectorAll(\"input[name=item]\");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script defer=\"\" src=\"//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js\"></script><script src=\"//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js\"></script><style>:root{--_a:var(--pico-muted-color);--_b:var(--pico-muted-border-color);--_c:var(--pico-card-sectioning-background-color);--_d:var(--pico-border-radius);--_e:var(--pico-card-background-color)}b{font-weight:inherit}body>main{max-width:580px;margin:0 auto;padding:1.5rem 1rem}.l{font-size:1.25rem;margin:0 0 1rem;padding-bottom:.75rem;border-bottom:1px solid var(--_b);letter-spacing:-.02em}.aa{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}.aa label{font-size:.8rem;color:var(--_a);display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer}.aa label input[type=checkbox]{margin:0}.i{flex:1}.aa [type=submit],.aa button{width:auto;font-size:.75rem;font-weight:500;padding:.4rem .75rem;margin:0;white-space:nowrap}.aa svg{width:14px;height:14px;vertical-align:-2px}.x{display:flex;flex-direction:column;gap:1px;background:var(--_b);border:1px solid var(--_b);border-radius:var(--_d);overflow:hidden;margin-bottom:1rem}.u{background:var(--_e)}details{margin:0}details summary{list-style:none!important;padding:0}details summary::after{display:none!important}details summary::-webkit-details-marker{display:none!important}details summary::marker{display:none!important;content:none!important}details[open]>summary{margin-bottom:0!important}.m{display:flex;align-items:center;gap:.5rem;padding:.6rem .75rem;cursor:pointer;user-select:none}.m:hover{background:var(--_c)}.m input[type=checkbox]{margin:0;flex-shrink:0}.z{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.y{font-size:.85rem;font-weight:600;flex:1}.t{font-size:.65rem;color:var(--_a);background:var(--_c);padding:.1rem .4rem;border-radius:3px;flex-shrink:0}.n{color:var(--_a);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .n{transform:rotate(90deg)}.v{border-top:1px solid var(--_b);background:var(--_c)}.w{display:flex;align-items:center;gap:.5rem;padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;color:var(--_a);border-bottom:1px solid var(--_b)}.w:last-child{border-bottom:none}.w input[type=checkbox]{margin:0;flex-shrink:0}.w .r{flex:1}.s{font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;padding:.05rem .3rem;border-radius:3px}.c{color:var(--pico-primary);background:var(--pico-primary-focus)}.h{color:var(--_a);background:var(--_c)}.k{text-align:center;padding:2rem 1rem;color:var(--_a)}#c{font-size:.8rem}#c progress{margin-top:.5rem}.j{display:flex;align-items:center;gap:.5rem}.o{width:8px;height:8px;border-radius:50%;flex-shrink:0}.d{background:var(--pico-primary)}.e{background:#d29922;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}.p{margin-top:.5rem;max-height:160px;overflow-y:auto}.p p{margin:.1rem 0;color:var(--_a);font-size:.75rem}.p p:last-child{color:var(--pico-color)}.q{font-size:.75rem;color:var(--_a);margin-left:auto}.b{margin-bottom:.75rem;background:var(--_e);border:1px solid var(--_b);border-radius:var(--_d);overflow:hidden}.a{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--_a);padding:.4rem .75rem;border-bottom:1px solid var(--_b)}.f{display:flex;align-items:center;gap:.5rem;font-size:.8rem;padding:.5rem .75rem}.f label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--_a)}.f label input[type=checkbox]{margin:0}.g{margin-left:auto!important}.g input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center}</style></head><body><main hx-get=\"app\" hx-trigger=\"load\"><p aria-busy=\"true\">Loading</p></main><script>document.addEventListener(\"htmx:load\",()=>lucide.createIcons())</script></body></html>"
+function ____exports.pageShell(self, baseUrl, objectName)
+    return ((("<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" data-theme=\"dark\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><base href=\"" .. baseUrl) .. "/\"/><title>") .. objectName) .. "</title><link rel=\"icon\" href=\"data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg'&gt;&lt;text y='1em'&gt;📝&lt;/text&gt;&lt;/svg&gt;\"/><link rel=\"stylesheet\" href=\"//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css\"/><script src=\"//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js\"></script><script>/*<![CDATA[*/document.addEventListener(\"alpine:init\",()=>{Alpine.data(\"patcher\",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll(\"input[name=item]\")],t=[...this.$root.querySelectorAll(\".d input[type=checkbox]\")],c=[...this.$root.querySelectorAll(\"details\")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(\".i\")].find(t=>t.querySelector(\".m\").textContent===e);if(!t)return;const c=[...t.querySelectorAll(\"input[name=item]\")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(\".d input[type=checkbox]\").forEach(e=>{const t=[...e.closest(\".i\").querySelectorAll(\"input[name=item]\")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll(\"input[name=item]:checked\")].map(e=>e.value);const e=this.$root.querySelectorAll(\"input[name=item]\");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src=\"//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js\"></script><style>b{font-weight:inherit}body{max-width:580px;padding:1.5rem 1rem}input[type=checkbox]{margin:0;flex-shrink:0}h2{margin:0 0 1rem}.k,.d,.f,.o{display:flex;align-items:center;gap:.5rem}.f label,.o label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--muted-foreground)}.o label{font-size:.8rem}.o{flex-wrap:wrap;margin-bottom:.75rem}.o [type=submit],.o button{font-size:.75rem;padding:.4rem .75rem;margin:0;white-space:nowrap}.o svg{width:14px;height:14px;vertical-align:-2px}.l{margin-bottom:1rem}.i{background:var(--card)}details{padding:0;overflow:hidden}summary{list-style:none}summary::marker{display:none;content:none}summary::-webkit-details-marker{display:none}.d{padding:.6rem .75rem;user-select:none}.d:hover{background:var(--accent)}.n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.h,.m{flex:1}.m{font-size:.85rem;font-weight:600}.e{color:var(--muted-foreground);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .e{transform:rotate(90deg)}kbd{font-size:.65rem;font-weight:600;text-transform:uppercase}.j{border-top:var(--border);background:var(--secondary)}.k{padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;border-bottom:var(--border)}.k:last-child{border-bottom:none}.c{text-align:center;padding:2rem 1rem;color:var(--muted-foreground)}#c{font-size:.8rem;flex-direction:column;align-items:stretch}#c>b{font-weight:600}.g{margin-top:.5rem;max-height:160px;overflow-y:auto}.g p{margin:0;padding:.1rem 0;color:var(--muted-foreground);font-size:.7rem;font-family:ui-monospace,monospace;line-height:1.3}.g p:last-child{color:var(--foreground)}.p{margin-bottom:.75rem;background:var(--card);padding:0;overflow:hidden}.b{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding:.4rem .75rem;border-bottom:var(--border)}.f{font-size:.8rem;padding:.5rem .75rem}.a{margin-left:auto!important}.a input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center;border:var(--border);border-radius:var(--radius);background:var(--background);color:var(--foreground)}</style></head><body><main hx-get=\"app\" hx-trigger=\"load\"><article aria-busy=\"spinner\" style=\"text-align:center\"></article></main><script>/*<![CDATA[*/document.addEventListener(\"htmx:load\",e=>{lucide.createIcons(),window.Alpine&&Alpine.initTree(e.target)})/*]]>*/</script><script defer=\"\" src=\"//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js\"></script></body></html>"
 end
-____exports.APP_FRAGMENT = "<h1 class=\"l\">Patcher</h1><form x-data=\"patcher\"><div class=\"aa\"><label><input type=\"checkbox\" x-bind:checked=\"allChecked\" x-on:change=\"toggleAll()\"/> All</label><b class=\"i\"></b><button type=\"submit\" hx-post=\"patch\" hx-target=\"#c\" x-show=\"items.length\" x-bind:disabled=\"items.length === 0\"><i data-lucide=\"play\"></i> Patch</button><button type=\"button\" hx-post=\"patch-all\" hx-target=\"#c\"><i data-lucide=\"layers\"></i> Patch All</button><button type=\"button\" class=\"secondary\" hx-get=\"objects\" hx-target=\"#b\"><i data-lucide=\"refresh-cw\"></i></button></div><div id=\"b\" hx-get=\"objects\" hx-trigger=\"load\" x-on:change=\"sync()\" x-on:htmx:after-swap.camel=\"sync()\"><p aria-busy=\"true\">Scanning inventory</p></div></form><div id=\"a\" hx-get=\"autoupdate\" hx-trigger=\"load\"></div><article id=\"c\"><div class=\"j\"><b class=\"o d\"></b><b>Ready</b></div></article>"
+function ____exports.appFragment(self, objectName)
+    return ("<h2>" .. objectName) .. "</h2><hr/><form x-data=\"patcher\"><div class=\"o\"><label><input type=\"checkbox\" x-bind:checked=\"allChecked\" x-on:click=\"toggleAll()\"/> All</label><b style=\"flex:1\"></b><button type=\"submit\" hx-post=\"patch\" hx-target=\"#c\" x-show=\"items.length\" x-bind:disabled=\"items.length === 0\"><i data-lucide=\"play\"></i> Patch</button><button type=\"button\" hx-post=\"patch-all\" hx-target=\"#c\"><i data-lucide=\"layers\"></i> Patch All</button><button type=\"button\" class=\"secondary\" hx-get=\"objects\" hx-target=\"#b\"><i data-lucide=\"refresh-cw\"></i></button></div><div id=\"b\" hx-get=\"objects\" hx-trigger=\"load\" x-on:change=\"sync()\" x-on:htmx:after-swap.camel=\"sync()\"><article aria-busy=\"spinner\" style=\"text-align:center\"></article></div></form><div id=\"a\" hx-get=\"autoupdate\" hx-trigger=\"load\"></div><article class=\"p\"><div class=\"b\">Status</div><div id=\"c\" class=\"f\">Ready</div></article>"
+end
 return ____exports
  end,
 ["patcher.ui"] = function(...) 
@@ -400,41 +429,11 @@ local getObjectNames = ____inventory.getObjectNames
 local getItemsForObject = ____inventory.getItemsForObject
 local patternMatches = ____inventory.patternMatches
 local targetItemName = ____inventory.targetItemName
-local function itemRow(self, fullName, itemName, typeClass, typeLabel)
-    return ((((((("<div class=\"w\"><input type=\"checkbox\" name=\"item\" value=\"" .. fullName) .. "\" x-on:change=\"sync()\"/><b class=\"r z\">") .. itemName) .. "</b><b class=\"s ") .. typeClass) .. "\">") .. typeLabel) .. "</b></div>"
-end
-local function objHeader(self, escapedName, badge)
-    return ((((("<summary><div class=\"m\"><b class=\"n\">&#9654;</b><input type=\"checkbox\" x-on:click.stop x-on:change=\"toggleObject('" .. escapedName) .. "')\"/><b class=\"y z\">") .. escapedName) .. "</b><b class=\"t\">") .. badge) .. "</b></div></summary>"
-end
-local function objGroup(self, content)
-    return ("<details class=\"u\">" .. content) .. "</details>"
-end
-local function objItems(self, content)
-    return ("<div class=\"v\">" .. content) .. "</div>"
-end
-local function objList(self, content)
-    return ("<div class=\"x\">" .. content) .. "</div>"
-end
-local function statusBusy(self, index, total, pct)
-    return ((((("<div class=\"j\"><b class=\"o e\"></b><b>Patching</b><b class=\"q\">" .. tostring(index)) .. "/") .. tostring(total)) .. " (") .. tostring(pct)) .. "%)</b></div>"
-end
-local function progressBar(self, index, total)
-    return ((("<progress value=\"" .. tostring(index)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
-end
-local function logEntry(self, entry)
-    return ("<p>" .. entry) .. "</p>"
-end
-local function statusLog(self, content)
-    return ("<div class=\"p\">" .. content) .. "</div>"
-end
-local function autoUpdateOn(self, debounce)
-    return ("<div class=\"b\"><div class=\"a\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" checked=\"\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label><label class=\"g\">Delay <input type=\"number\" name=\"debounce\" value=\"" .. tostring(debounce)) .. "\" min=\"1\" max=\"60\" hx-post=\"autoupdate-debounce\" hx-target=\"#a\" hx-trigger=\"change\"/> s</label></div></div>"
-end
-local EMPTY_STATE = "<div class=\"k\">No patchable objects found in inventory.</div>"
-local STATUS_DONE = "<div class=\"j\"><b class=\"o d\"></b><b>Done</b></div>"
+local inventoryTypeLabel = ____inventory.inventoryTypeLabel
+local EMPTY_STATE = "<div class=\"c\">No patchable objects found in inventory.</div>"
+local STATUS_DONE = "<b>Done</b>"
 local POLL_TRIGGER = "<div hx-get=\"poll\" hx-trigger=\"load\" hx-target=\"#c\"></div>"
-local AUTO_UPDATE_OFF = "<div class=\"b\"><div class=\"a\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label></div></div>"
-____exports.NO_ITEMS_SELECTED = "<div class=\"j\"><b class=\"o d\"></b><b>No items selected</b></div>"
+____exports.NO_ITEMS_SELECTED = "<b>No items selected</b>"
 --- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(self, s)
     return ll.ReplaceSubString(
@@ -454,18 +453,18 @@ local function escapeHtml(self, s)
         0
     )
 end
---- Builds a single item row with checkbox, name, and type badge.
-local function buildItemRow(self, fullItemName, typeClass, typeLabel)
-    return itemRow(
+--- Builds an inventory row with a type-specific badge.
+local function buildItemRow(self, fullItemName)
+    local typeLabel = inventoryTypeLabel(
         nil,
-        escapeHtml(nil, fullItemName),
-        escapeHtml(
-            nil,
-            targetItemName(nil, fullItemName)
-        ),
-        typeClass,
-        typeLabel
+        ll.GetInventoryType(fullItemName)
     )
+    local escaped = escapeHtml(nil, fullItemName)
+    local itemName = escapeHtml(
+        nil,
+        targetItemName(nil, fullItemName)
+    )
+    return ((((((("<label class=\"k\"><input type=\"checkbox\" name=\"item\" value=\"" .. escaped) .. "\" x-on:change=\"sync()\"/><b class=\"h n\" tooltip-top=\"") .. itemName) .. "\">") .. itemName) .. "</b><kbd secondary>") .. typeLabel) .. "</kbd></label>"
 end
 --- Builds the object list HTML with expandable groups and per-item checkboxes.
 -- Each item checkbox has name="item" value="ObjectName/item-name".
@@ -478,55 +477,38 @@ function ____exports.buildObjectList(self, selfName)
         local items = ____getItemsForObject_result_0.items
         if #scripts > 0 or #items > 0 then
             local escaped = escapeHtml(nil, obj)
-            local parts = {}
-            if #scripts > 0 then
-                parts[#parts + 1] = tostring(#scripts) .. "s"
-            end
-            if #items > 0 then
-                parts[#parts + 1] = tostring(#items) .. "i"
-            end
             local itemsHtml = ""
             for ____, script in ipairs(scripts) do
-                itemsHtml = itemsHtml .. buildItemRow(nil, script, "item-type-script", "script")
+                itemsHtml = itemsHtml .. buildItemRow(nil, script)
             end
             for ____, item in ipairs(items) do
-                itemsHtml = itemsHtml .. buildItemRow(nil, item, "item-type-item", "item")
+                itemsHtml = itemsHtml .. buildItemRow(nil, item)
             end
-            html = html .. objGroup(
-                nil,
-                objHeader(
-                    nil,
-                    escaped,
-                    table.concat(parts, " ")
-                ) .. objItems(nil, itemsHtml)
-            )
+            html = html .. ((((((("<details class=\"i\"><summary><div class=\"d\"><b class=\"e\">&#9654;</b><input type=\"checkbox\" x-on:click.stop=\"" .. ("toggleObject('" .. escaped) .. "')") .. "\"/><b class=\"m n\" tooltip-top=\"") .. escaped) .. "\">") .. escaped) .. "</b></div></summary><div class=\"j\">") .. itemsHtml) .. "</div></details>"
         end
     end
     if html == "" then
         return EMPTY_STATE
     end
-    return objList(nil, html)
+    return html
 end
 --- Builds a status fragment showing current patch progress.
 -- Includes an hx-get="poll" trigger to continue long polling while busy.
 function ____exports.buildStatusFragment(self, busy, index, total, log)
     local html = ""
     if busy then
-        local pct = if total > 0 then math.floor(index / total * 100) else 0
-        html = html .. statusBusy(nil, index, total, pct)
-        html = html .. progressBar(nil, index, total)
+        html = html .. ((((((("<b>Patching " .. tostring(index)) .. "/") .. tostring(total)) .. "</b><progress value=\"") .. tostring(index)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
+    elseif total > 0 then
+        html = html .. ((("<b>Done</b><progress value=\"" .. tostring(total)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
     else
         html = html .. STATUS_DONE
     end
     if #log > 0 then
         local logHtml = ""
         for ____, entry in ipairs(log) do
-            logHtml = logHtml .. logEntry(
-                nil,
-                escapeHtml(nil, entry)
-            )
+            logHtml = logHtml .. ("<p>" .. escapeHtml(nil, entry)) .. "</p>"
         end
-        html = html .. statusLog(nil, logHtml)
+        html = html .. ("<div class=\"g\">" .. logHtml) .. "</div>"
     end
     if busy then
         html = html .. POLL_TRIGGER
@@ -624,9 +606,9 @@ end
 -- Returned for GET /autoupdate and POST /autoupdate.
 function ____exports.buildAutoUpdateControls(self, enabled, debounce)
     if enabled then
-        return autoUpdateOn(nil, debounce)
+        return ("<article class=\"p\"><div class=\"b\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" checked=\"\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label><label class=\"a\">Delay <input type=\"number\" name=\"debounce\" value=\"" .. tostring(debounce)) .. "\" min=\"1\" max=\"60\" hx-post=\"autoupdate-debounce\" hx-target=\"#a\" hx-trigger=\"change delay:500ms\"/> s</label></div></article>"
     end
-    return AUTO_UPDATE_OFF
+    return ("<article class=\"p\"><div class=\"b\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label><label class=\"a\">Delay <input type=\"number\" name=\"debounce\" value=\"" .. tostring(debounce)) .. "\" min=\"1\" max=\"60\" hx-post=\"autoupdate-debounce\" hx-target=\"#a\" hx-trigger=\"change delay:500ms\"/> s</label></div></article>"
 end
 return ____exports
  end,
@@ -645,7 +627,7 @@ local function __TS__ArrayFilter(self, callbackfn, thisArg)
 end
 -- End of Lua Library inline imports
 local ____exports = {}
-local logStatus, pushStatus, statusFragment, respondPoll, patchNext, startPatching, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, busy, timeoutTimer, pendingScripts, pendingItems, pollRequestId, pollTimer, statusLog
+local logStatus, pushStatus, statusFragment, respondPoll, patchNext, startPatching, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, busy, timeoutTimer, pendingScripts, pendingItems, scriptLoadTimer, pollRequestId, pollTimer, statusLog
 local ____inventory = require("patcher.inventory")
 local getItemsForObject = ____inventory.getItemsForObject
 local getObjectNames = ____inventory.getObjectNames
@@ -657,7 +639,7 @@ local startParticles = ____effects.startParticles
 local stopParticles = ____effects.stopParticles
 local ____template = require("patcher.template")
 local pageShell = ____template.pageShell
-local APP_FRAGMENT = ____template.APP_FRAGMENT
+local appFragment = ____template.appFragment
 local ____ui = require("patcher.ui")
 local buildObjectList = ____ui.buildObjectList
 local buildStatusFragment = ____ui.buildStatusFragment
@@ -688,12 +670,11 @@ function pushStatus(self, message)
     end
 end
 function statusFragment(self)
-    local completed = if busy then math.max(0, queueIndex - 1) else 0
     return buildStatusFragment(
         nil,
         busy,
-        completed,
-        #patchQueue,
+        completedItems,
+        totalItems,
         statusLog
     )
 end
@@ -757,11 +738,11 @@ function patchNext(self)
     end
     setStatus(
         nil,
-        (((((((((currentObjectName .. "\n") .. tostring(#pendingScripts)) .. " script(s), ") .. tostring(#pendingItems)) .. " item(s)") .. "\n[") .. tostring(queueIndex)) .. "/") .. tostring(#patchQueue)) .. "]"
+        (((((((((currentObjectName .. "\n") .. tostring(#pendingScripts)) .. " script(s), ") .. tostring(#pendingItems)) .. " item(s)") .. "\n[") .. tostring(completedItems)) .. "/") .. tostring(totalItems)) .. "]"
     )
     pushStatus(
         nil,
-        ((((("Rezzing " .. currentObjectName) .. "... [") .. tostring(queueIndex)) .. "/") .. tostring(#patchQueue)) .. "]"
+        ((((("Rezzing " .. currentObjectName) .. "... [") .. tostring(completedItems)) .. "/") .. tostring(totalItems)) .. "]"
     )
     currentObjectId = ll.RezObjectWithParams(
         currentObjectName,
@@ -779,6 +760,10 @@ function patchNext(self)
         timeoutSeconds,
         function()
             stopParticles(nil)
+            if scriptLoadTimer then
+                LLTimers:off(scriptLoadTimer)
+                scriptLoadTimer = nil
+            end
             pushStatus(nil, ("Timeout waiting for " .. currentObjectName) .. ", derezing.")
             ll.DerezObject(currentObjectId, DEREZ_DIE)
             timeoutTimer = nil
@@ -793,13 +778,33 @@ function startPatching(self, queue, itemFilter, resetLog)
     patchQueue = queue
     patchItemFilter = itemFilter or ({})
     queueIndex = 0
+    completedItems = 0
     busy = true
+    totalItems = 0
+    for ____, obj in ipairs(queue) do
+        local ____getItemsForObject_result_1 = getItemsForObject(nil, SELF_NAME, obj)
+        local scripts = ____getItemsForObject_result_1.scripts
+        local items = ____getItemsForObject_result_1.items
+        local filter = patchItemFilter[obj]
+        if filter and #filter > 0 then
+            totalItems = totalItems + #__TS__ArrayFilter(
+                scripts,
+                function(____, s) return table.find(filter, s) ~= nil end
+            )
+            totalItems = totalItems + #__TS__ArrayFilter(
+                items,
+                function(____, it) return table.find(filter, it) ~= nil end
+            )
+        else
+            totalItems = totalItems + (#scripts + #items)
+        end
+    end
     if resetLog then
         statusLog = {}
     end
     pushStatus(
         nil,
-        ("Patching " .. tostring(#queue)) .. " object(s)..."
+        ((("Patching " .. tostring(totalItems)) .. " item(s) across ") .. tostring(#queue)) .. " object(s)..."
     )
     patchNext(nil)
 end
@@ -812,15 +817,53 @@ currentObjectName = ""
 patchQueue = {}
 patchItemFilter = {}
 queueIndex = 0
+totalItems = 0
+completedItems = 0
 busy = false
 timeoutTimer = nil
 pendingScripts = {}
 pendingItems = {}
+--- Index into pendingScripts for timer-based sequential loading.
+local pendingScriptIdx = 0
+scriptLoadTimer = nil
 --- The HTTP-in URL assigned by the simulator.
 local httpUrl = ""
 pollRequestId = ""
 pollTimer = nil
 statusLog = {}
+--- Loads pending scripts one at a time using a timer chain.
+-- Yields to the event loop between loads so the browser can re-establish
+-- its long poll and receive real-time progress updates.
+local function loadNextScript(self)
+    if pendingScriptIdx >= #pendingScripts then
+        stopParticles(nil)
+        ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
+        return
+    end
+    local script = pendingScripts[pendingScriptIdx + 1]
+    local name = targetItemName(nil, script)
+    setStatus(
+        nil,
+        ((((((currentObjectName .. "\nLoading ") .. name) .. "\n[") .. tostring(completedItems)) .. "/") .. tostring(totalItems)) .. "]"
+    )
+    pushStatus(nil, (("Loading " .. name) .. " into ") .. currentObjectName)
+    ll.RemoteLoadScriptPin(
+        currentObjectId,
+        script,
+        PIN,
+        1,
+        0
+    )
+    completedItems = completedItems + 1
+    pendingScriptIdx = pendingScriptIdx + 1
+    scriptLoadTimer = LLTimers:once(
+        0.5,
+        function()
+            scriptLoadTimer = nil
+            loadNextScript(nil)
+        end
+    )
+end
 --- Releases the current HTTP-in URL and requests a new one.
 local function refreshUrl(self)
     pollRequestId = ""
@@ -852,10 +895,21 @@ LLEvents:on(
                 respondHtml(
                     nil,
                     requestId,
-                    pageShell(nil, httpUrl)
+                    pageShell(
+                        nil,
+                        httpUrl,
+                        ll.GetObjectName()
+                    )
                 )
             elseif url == "/app" then
-                respondHtml(nil, requestId, APP_FRAGMENT)
+                respondHtml(
+                    nil,
+                    requestId,
+                    appFragment(
+                        nil,
+                        ll.GetObjectName()
+                    )
+                )
             elseif url == "/objects" then
                 respondHtml(
                     nil,
@@ -904,9 +958,9 @@ LLEvents:on(
                     )
                     return
                 end
-                local ____parseFormItems_result_1 = parseFormItems(nil, body)
-                local queue = ____parseFormItems_result_1.queue
-                local filter = ____parseFormItems_result_1.filter
+                local ____parseFormItems_result_2 = parseFormItems(nil, body)
+                local queue = ____parseFormItems_result_2.queue
+                local filter = ____parseFormItems_result_2.filter
                 if #queue == 0 then
                     respondHtml(nil, requestId, NO_ITEMS_SELECTED)
                     return
@@ -928,9 +982,9 @@ LLEvents:on(
                 end
                 local queue = {}
                 for ____, obj in ipairs(getObjectNames(nil)) do
-                    local ____getItemsForObject_result_2 = getItemsForObject(nil, SELF_NAME, obj)
-                    local scripts = ____getItemsForObject_result_2.scripts
-                    local items = ____getItemsForObject_result_2.items
+                    local ____getItemsForObject_result_3 = getItemsForObject(nil, SELF_NAME, obj)
+                    local scripts = ____getItemsForObject_result_3.scripts
+                    local items = ____getItemsForObject_result_3.items
                     if #scripts > 0 or #items > 0 then
                         queue[#queue + 1] = obj
                     end
@@ -1019,29 +1073,19 @@ LLEvents:on(
             if message == "pinned" and id == currentObjectId then
                 for ____, item in ipairs(pendingItems) do
                     ll.GiveInventory(currentObjectId, item)
+                    completedItems = completedItems + 1
                 end
                 startParticles(nil, currentObjectId)
-                for ____, script in ipairs(pendingScripts) do
-                    local name = targetItemName(nil, script)
-                    setStatus(
-                        nil,
-                        ((((((currentObjectName .. "\nLoading ") .. name) .. "\n[") .. tostring(queueIndex)) .. "/") .. tostring(#patchQueue)) .. "]"
-                    )
-                    pushStatus(nil, (("Loading " .. name) .. " into ") .. currentObjectName)
-                    ll.RemoteLoadScriptPin(
-                        currentObjectId,
-                        script,
-                        PIN,
-                        1,
-                        0
-                    )
-                end
-                stopParticles(nil)
-                ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
+                pendingScriptIdx = 0
+                loadNextScript(nil)
             elseif message == "ready" and id == currentObjectId then
                 if timeoutTimer then
                     LLTimers:off(timeoutTimer)
                     timeoutTimer = nil
+                end
+                if scriptLoadTimer then
+                    LLTimers:off(scriptLoadTimer)
+                    scriptLoadTimer = nil
                 end
                 logStatus(nil, currentObjectName .. " patched successfully.")
                 ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
@@ -1086,6 +1130,11 @@ setupAutoUpdate(
     function() return busy end,
     pushStatus
 )
+do
+    local used = ll.GetUsedMemory()
+    local limit = ll.GetMemoryLimit()
+    ll.OwnerSay(((((("Memory: " .. tostring(used // 1024)) .. "KB / ") .. tostring(limit // 1024)) .. "KB (") .. tostring(math.floor(used / limit * 100))) .. "%)")
+end
 return ____exports
  end,
 }
