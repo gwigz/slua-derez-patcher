@@ -86,9 +86,10 @@ export function buildObjectList(selfName: string) {
 
 /**
  * Builds a status fragment showing current patch progress.
- * Includes an hx-get="poll" trigger to continue long polling while busy.
+ * Includes an hx-get="poll" trigger to continue long polling while busy
+ * or when autoupdate is enabled (so status updates push immediately).
  */
-export function buildStatusFragment(busy: boolean, index: number, total: number, log: string[]) {
+export function buildStatusFragment(busy: boolean, index: number, total: number, log: string[], autoUpdate = false) {
   let html = "";
 
   if (busy) {
@@ -121,7 +122,7 @@ export function buildStatusFragment(busy: boolean, index: number, total: number,
     html += <div class="status-log">{logHtml}</div>;
   }
 
-  if (busy) {
+  if (busy || autoUpdate) {
     html += POLL_TRIGGER;
   }
 
@@ -262,6 +263,7 @@ export function buildAutoUpdateControls(enabled: boolean, debounce: number) {
             {" s"}
           </label>
         </div>
+        {POLL_TRIGGER}
       </article>
     );
   }

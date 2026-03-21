@@ -226,18 +226,25 @@ end
 
 function getAffectedObjects(changedItems)
   local objects = getObjectNames()
-  local affected = {}
+  local filter = {}
+  local queue = {}
 
   for ____, obj in ipairs(objects) do
     for ____, item in ipairs(changedItems) do
       if matchesObject(item, obj) then
-        affected[#affected + 1] = obj
-        break
+        if filter[obj] == nil then
+          filter[obj] = {}
+          queue[#queue + 1] = obj
+        end
+
+        local ____filter_obj_1 = filter[obj]
+
+        ____filter_obj_1[#____filter_obj_1 + 1] = item
       end
     end
   end
 
-  return affected
+  return { queue = queue, filter = filter }
 end
 
 local enabled = false
@@ -322,18 +329,20 @@ local function onInventoryChanged()
       return
     end
 
-    local affected = getAffectedObjects(changed)
+    local ____getAffectedObjects_result_0 = getAffectedObjects(changed)
+    local queue = ____getAffectedObjects_result_0.queue
+    local filter = ____getAffectedObjects_result_0.filter
 
-    if #affected == 0 then
+    if #queue == 0 then
       return
     end
 
     if triggerPatch and pushMsg then
       pushMsg(
-        ((("Auto-update: " .. tostring(#changed)) .. " item(s) changed, patching ") .. tostring(#affected))
+        ((("Auto-update: " .. tostring(#changed)) .. " item(s) changed, patching ") .. tostring(#queue))
           .. " object(s)..."
       )
-      triggerPatch(affected)
+      triggerPatch(queue, filter)
     end
   end)
 end
@@ -486,8 +495,13 @@ local function buildObjectList(selfName)
 end
 
 --- Builds a status fragment showing current patch progress.
--- Includes an hx-get="poll" trigger to continue long polling while busy.
-local function buildStatusFragment(busy, index, total, log)
+-- Includes an hx-get="poll" trigger to continue long polling while busy
+-- or when autoupdate is enabled (so status updates push immediately).
+local function buildStatusFragment(busy, index, total, log, autoUpdate)
+  if autoUpdate == nil then
+    autoUpdate = false
+  end
+
   local html = ""
 
   if busy then
@@ -514,7 +528,7 @@ local function buildStatusFragment(busy, index, total, log)
     html = html .. ('<div class="g">' .. logHtml) .. "</div>"
   end
 
-  if busy then
+  if busy or autoUpdate then
     html = html .. POLL_TRIGGER
   end
 
@@ -627,10 +641,14 @@ end
 local function buildAutoUpdateControls(enabled, debounce)
   if enabled then
     return (
-      '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" checked="" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
-      .. tostring(debounce)
-    )
-      .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div></article>'
+      (
+        (
+          '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" checked="" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
+          .. tostring(debounce)
+        )
+        .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div>'
+      ) .. POLL_TRIGGER
+    ) .. "</article>"
   end
 
   return (
@@ -680,7 +698,7 @@ function pushStatus(message)
 end
 
 function statusFragment()
-  return buildStatusFragment(busy, completedItems, totalItems, statusLog)
+  return buildStatusFragment(busy, completedItems, totalItems, statusLog, isAutoUpdateEnabled())
 end
 
 function respondPoll()

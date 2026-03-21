@@ -9,7 +9,7 @@ let debounceTimer: LLTimerCallback | null = null;
 let pendingQueue: string[] = [];
 
 /** Callback set by index.ts to trigger a patch run. */
-let triggerPatch: ((queue: string[]) => void) | null = null;
+let triggerPatch: ((queue: string[], filter: Record<string, string[]>) => void) | null = null;
 
 /** Callback set by index.ts to check if a patch is in progress. */
 let checkBusy: (() => boolean) | null = null;
@@ -38,7 +38,7 @@ function cancelDebounce() {
  */
 export function setup(
   self: string,
-  trigger: (queue: string[]) => void,
+  trigger: (queue: string[], filter: Record<string, string[]>) => void,
   busy: () => boolean,
   status: (message: string) => void,
 ) {
@@ -94,14 +94,14 @@ export function onInventoryChanged() {
 
     if (changed.length === 0) return;
 
-    const affected = getAffectedObjects(changed);
+    const { queue, filter } = getAffectedObjects(changed);
 
-    if (affected.length === 0) return;
+    if (queue.length === 0) return;
 
     if (triggerPatch && pushMsg) {
-      pushMsg(`Auto-update: ${changed.length} item(s) changed, patching ${affected.length} object(s)...`);
+      pushMsg(`Auto-update: ${changed.length} item(s) changed, patching ${queue.length} object(s)...`);
 
-      triggerPatch(affected);
+      triggerPatch(queue, filter);
     }
   });
 }
@@ -157,19 +157,24 @@ function diffSnapshot() {
   return changed;
 }
 
-/** Finds which objects are targeted by the changed items using inventory.ts matching. */
+/** Finds which objects are targeted by the changed items and builds a per-object filter. */
 function getAffectedObjects(changedItems: string[]) {
   const objects = getObjectNames();
-  const affected: string[] = [];
+  const filter: Record<string, string[]> = {};
+  const queue: string[] = [];
 
   for (const obj of objects) {
     for (const item of changedItems) {
       if (matchesObject(item, obj)) {
-        affected.push(obj);
-        break;
+        if (filter[obj] === undefined) {
+          filter[obj] = [];
+          queue.push(obj);
+        }
+
+        filter[obj].push(item);
       }
     }
   }
 
-  return affected;
+  return { queue, filter };
 }

@@ -133,7 +133,7 @@ function pushStatus(message: string) {
 
 /** Builds a status fragment from current patch state. */
 function statusFragment() {
-  return buildStatusFragment(busy, completedItems, totalItems, statusLog);
+  return buildStatusFragment(busy, completedItems, totalItems, statusLog, isAutoUpdateEnabled());
 }
 
 /** Responds to the held long-poll request with current status. */
