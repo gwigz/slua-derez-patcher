@@ -488,3 +488,13 @@ ll.Listen(COMM_CHANNEL, "", NULL_KEY as unknown as uuid, "");
 ll.RequestURL();
 
 setupAutoUpdate(SELF_NAME, startPatching, () => busy, pushStatus);
+
+/** Scoped to drop unused variables from the global scope. */
+{
+  const used = ll.GetUsedMemory();
+  const limit = ll.GetMemoryLimit();
+
+  ll.OwnerSay(
+    `Memory: ${Math.floor(used / 1024)}KB / ${Math.floor(limit / 1024)}KB (${Math.floor((used / limit) * 100)}%)`,
+  );
+}
