@@ -19,6 +19,10 @@ TypeScript project that transpiles to Luau for Second Life's SLua runtime using 
 
 `src/web/` files are **build-time only** (run in Bun, never compiled by TSTL). `src/patcher/` files are **runtime** (compiled to Luau by TSTL). Do not put JSX/TSX files in `src/patcher/`.
 
+### HTML Templates
+
+In JSX templates, use `<b>` instead of `<span>` for inline non-semantic wrappers (badges, dots, spacers, labels). `<b>` is 4 bytes shorter per element than `<span>` (both open and close tags), which adds up in the minified HTML strings embedded in the Lua bundle. A global `b { font-weight: inherit; }` reset neutralizes the bold default so `<b>` behaves like `<span>`.
+
 ## Writing TypeScript for SLua
 
 Source files go in `src/patcher/`. The plugin transpiles standard TypeScript patterns into native SLua/Luau equivalents automatically.

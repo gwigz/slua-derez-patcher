@@ -119,6 +119,93 @@ flowchart TD
     H -->|minify inline JS, shorten CSS classes| H
 ```
 
+### JSX Templates
+
+The `.tsx` files in `src/patcher/` are **not** compiled by TSTL. They use JSX purely as a build-time HTML templating language, `build.ts` evaluates them with Bun, minifies the output, and writes plain `.ts` files that TSTL can compile to Luau.
+
+#### How it works
+
+`build.ts` ships a tiny inline JSX runtime (`h`, `Fragment`) that renders elements to HTML strings. At build time it:
+
+1. Parses each `.tsx` file with [ts-morph](https://ts-morph.com) to find functions and consts that contain JSX
+2. Evaluates them via Bun's `require()` (with the JSX runtime prepended)
+3. Minifies the resulting HTML (collapsing whitespace, shortening CSS classes/IDs, aliasing CSS variables)
+4. Writes a `.ts` file where every JSX expression has been replaced with a string literal or string-concatenation expression
+
+The generated `.ts` files are deleted after TSTL compiles them, so the editor always resolves to the `.tsx` sources.
+
+#### Slots
+
+Function templates use **slots** to inject runtime values into static HTML. When `build.ts` evaluates a function like:
+
+```tsx
+function statusBusyBlock(index: string | number, total: string | number, pct: string | number) {
+  return (
+    <>
+      <b>
+        Patching {index}/{total} ({pct}%)
+      </b>
+      <progress value={index} max={total}></progress>
+    </>
+  );
+}
+```
+
+It calls the function with marker strings `statusBusyBlock("__SLOT_index__", "__SLOT_total__", "__SLOT_pct__")`, then splits the minified HTML on those markers. The result is a TypeScript function body that concatenates static segments with runtime parameters:
+
+```ts
+function statusBusyBlock(index: string | number, total: string | number) {
+  return (
+    "<b>Patching " +
+    index +
+    "/" +
+    total +
+    "</b><progress value="' +
+    index +
+    '" max="' +
+    total +
+    '"></progress>'
+  );
+}
+```
+
+Const templates (no parameters, no slots) compile to plain string literals:
+
+```tsx
+// .tsx source
+const STATUS_DONE = <b>Done</b>;
+
+// compiled .ts output
+const STATUS_DONE = "<b>Done</b>";
+```
+
+This gives you full JSX ergonomics for authoring HTML while producing minimal string-concat code at runtime, no JSX runtime ships to Luau.
+
+#### Pure templates vs inline JSX
+
+Functions whose body is a single `return <JSX>` are **pure templates** -- the build system replaces their entire body with a string-concat return. For simple one-off fragments you can also use JSX directly in runtime functions:
+
+```tsx
+// Pure template: single return, compiled to string concat
+function listItem(item: string) {
+  return <p>{item}</p>;
+}
+
+// Inline JSX: mixed with runtime logic, each JSX node compiled independently
+function buildList(items: string[]) {
+  let html = "";
+  for (const item of items) {
+    html += <p>{escapeHtml(item)}</p>;
+  }
+  return html;
+}
+```
+
+Dynamic expressions (identifiers, function calls, template literals with interpolations) become slots in the concat. Static expressions (string/number/boolean literals, static object literals) are evaluated at build time and baked into the HTML.
+
+> [!NOTE]
+> Inline JSX doesn't support JSX nested inside dynamic expressions (`<div>{flag ? <A/> : <B/>}</div>` -- use `html += flag ? <A/> : <B/>` instead so each branch is a separate root node) or component-style JSX (`<MyComponent />`) since the component function isn't available in the build-time temp file.
+
 ### Web UI Stack
 
 The web UI is served entirely from SLua's HTTP-in (no external server):
@@ -129,13 +216,13 @@ graph TD
     Browser --> CDN
     CDN --> HTMX(HTMX)
     CDN --> Alpine(Alpine.js)
-    CDN --> Pico(Pico CSS)
+    CDN --> shadcn(shadcn classless)
     CDN --> Lucide(Lucide Icons)
 ```
 
-The stack is deliberately minimal, everything the script serves has to fit in SLua's limited script memory.
+The stack is deliberately minimal, everything the script serves has to fit in SLua's script memory.
 
-[HTMX](https://htmx.org) fits perfectly: the server sends tiny HTML fragments instead of JSON, and the client swaps them in place with no build step or client-side routing. [Alpine.js](https://alpinejs.dev) covers the small amount of client state (checkbox toggles). [Pico CSS](https://picocss.com) gives a clean dark-mode look with zero classes, and [Lucide](https://lucide.dev) provides icons via `data-lucide` tags.
+[HTMX](https://htmx.org) fits perfectly: the server sends tiny HTML fragments instead of JSON, and the client swaps them in place with no build step or client-side routing. [Alpine.js](https://alpinejs.dev) covers client-side state (checkbox toggles, select-all). [shadcn classless](https://github.com/fordus/shadcn-classless) gives a clean dark-mode look with zero classes, and [Lucide](https://lucide.dev) provides icons via `data-lucide` tags.
 
 Everything loads from CDN so the SLua script never serves static assets.
 

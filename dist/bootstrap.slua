@@ -1,10 +1,16 @@
 --[[
-Bootstrap script, loaded into target objects via `ll.RemoteLoadScriptPin`.
+SLua Derez Patcher — bootstrap receiver for target objects.
 
-On rez with the correct PIN, opens a listener on the comm channel and
-signals "pinned" to the patcher. Once the patcher finishes transferring
-scripts and items and sends "done", responds with "ready" and cleans up
-the listener.
+Drop this script into every object that the patcher should be able to
+update. It sets a remote script access PIN so the patcher can load
+scripts into the object via ll.RemoteLoadScriptPin.
+
+When the object is rezzed with the correct PIN as its start parameter,
+this script signals "pinned" to the patcher, waits for a "done" message
+once all items and scripts have been transferred, then replies "ready"
+so the patcher can derez the object back to inventory.
+
+@link https://github.com/gwigz/slua-derez-patcher
 ]]
 
 --- Internal channel for patcher/bootstrap protocol messages.
