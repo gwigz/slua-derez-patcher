@@ -157,11 +157,12 @@ function buildShorteningMap(allHtml: string): ShorteningMap {
   const cssVarAliases: [string, string][] = [];
   let cssVarRootBlock = "";
 
+  const aliasDefOverhead = `--_${shortClassName(0)}:;`.length;
+  const aliasVarLen = `var(--_${shortClassName(0)})`.length;
+
   const varsToAlias = [...varCounts.entries()]
     .filter(([ref, count]) => {
-      const defCost = `--_${shortClassName(0)}:${ref};`.length;
-      const saved = count * (ref.length - `var(--_${shortClassName(0)})`.length);
-      return saved > defCost;
+      return count * (ref.length - aliasVarLen) > aliasDefOverhead + ref.length;
     })
     .sort((a, b) => b[1] - a[1]);
 
@@ -353,12 +354,11 @@ function flattenBundle(code: string): string {
 }
 
 /** Prepends file header comment and constants to a compiled .slua file. */
-function injectConstants(filePath: string, sourcePath: string, comments: Record<string, string>) {
-  const content = readFileSync(filePath, "utf8");
+function injectConstants(filePath: string, content: string, sourcePath: string, comments: Record<string, string>) {
   const header = extractFileComment(sourcePath);
 
   const lines = Object.entries(constants)
-    .filter(([name]) => content.includes(name))
+    .filter(([name]) => new RegExp(`\\b${name}\\b`).test(content))
     .map(([name, value]) => {
       const comment = comments[name];
       return comment ? `--- ${comment}\nlocal ${name} = ${value}` : `local ${name} = ${value}`;
@@ -777,7 +777,7 @@ function generateTsModule(evaluated: Awaited<ReturnType<typeof evaluateTsxModule
     stmt.remove();
   }
 
-  // 4. Remove JSX imports + pragmas
+  // 5. Remove JSX imports + pragmas
   source
     .getImportDeclarations()
     .filter((imp) => imp.getModuleSpecifierValue().includes("/jsx"))
@@ -867,9 +867,9 @@ async function build() {
   }
 
   const patcherPath = resolve("dist/patcher.slua");
-  const patcherCode = readFileSync(patcherPath, "utf8");
+  const patcherFlattened = flattenBundle(readFileSync(patcherPath, "utf8"));
 
-  writeFileSync(patcherPath, flattenBundle(patcherCode));
+  writeFileSync(patcherPath, patcherFlattened);
 
   // Bootstrap standalone
   const bootstrapResult = tstl.transpileFiles([resolve("src/types/globals.d.ts"), resolve("src/bootstrap.ts")], {
@@ -895,15 +895,17 @@ async function build() {
 
   const bootstrapPath = resolve("dist/bootstrap.slua");
 
-  writeFileSync(bootstrapPath, formatLua(readFileSync(bootstrapPath, "utf8")));
+  const bootstrapFormatted = formatLua(readFileSync(bootstrapPath, "utf8"));
+
+  writeFileSync(bootstrapPath, bootstrapFormatted);
 
   if (hasErrors) {
     return false;
   }
 
   // Step 3: Inject constants at top of both .slua files
-  injectConstants(resolve("dist/patcher.slua"), "src/patcher/index.ts", comments);
-  injectConstants(resolve("dist/bootstrap.slua"), "src/bootstrap.ts", comments);
+  injectConstants(patcherPath, patcherFlattened, "src/patcher/index.ts", comments);
+  injectConstants(bootstrapPath, bootstrapFormatted, "src/bootstrap.ts", comments);
 
   // Step 4: Format .slua output with StyLua
   execSync("npx stylua --verify -- dist/patcher.slua dist/bootstrap.slua");
