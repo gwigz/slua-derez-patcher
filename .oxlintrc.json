@@ -1,7 +1,11 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [],
+  "plugins": ["typescript"],
   "categories": {},
-  "rules": {},
+  "rules": {
+    "eqeqeq": "error",
+    "no-extra-boolean-cast": "error",
+    "strict-boolean-expressions": "error"
+  },
   "ignorePatterns": ["**/*.lua"]
 }

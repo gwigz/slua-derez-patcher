@@ -46,7 +46,48 @@ local function require(file, ...)
     end
 end
 ____modules = {
-["src.patcher.inventory"] = function(...) 
+["bootstrap"] = function(...) 
+local ____exports = {}
+--- Active listen handle, or 0 when not listening.
+local listenHandle = 0
+ll.SetRemoteScriptAccessPin(PIN)
+LLEvents:on(
+    "on_rez",
+    function(startParam)
+        if startParam == PIN then
+            if listenHandle ~= 0 then
+                ll.ListenRemove(listenHandle)
+            end
+            listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
+            ll.RegionSay(COMM_CHANNEL, "pinned")
+        end
+    end
+)
+LLEvents:on(
+    "listen",
+    function(channel, name, id, message)
+        if channel == COMM_CHANNEL and message == "done" then
+            ll.RegionSayTo(id, COMM_CHANNEL, "ready")
+            if listenHandle ~= 0 then
+                ll.ListenRemove(listenHandle)
+                listenHandle = 0
+            end
+        end
+    end
+)
+return ____exports
+ end,
+["constants"] = function(...) 
+local ____exports = {}
+--- Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`.
+____exports.PIN = 87654321
+--- Internal channel for patcher/bootstrap protocol messages.
+____exports.COMM_CHANNEL = -47123
+--- Owner chat channel for commands (patcher only).
+____exports.CMD_CHANNEL = 7
+return ____exports
+ end,
+["patcher.inventory"] = function(...) 
 local ____exports = {}
 --- Matches an object name against a wildcard pattern.
 -- 
@@ -100,6 +141,9 @@ function ____exports.matchesObject(self, name, objectName)
         return false
     end
     local prefix = string.sub(name, 1, slashIdx)
+    if prefix == objectName then
+        return true
+    end
     if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
         return ____exports.patternMatches(
             nil,
@@ -107,16 +151,16 @@ function ____exports.matchesObject(self, name, objectName)
             string.sub(prefix, 2, #prefix - 1)
         )
     end
-    return prefix == objectName
+    return false
 end
 --- Returns the names of all object-type items in the prim's inventory.
 function ____exports.getObjectNames(self)
     local names = {}
     local count = ll.GetInventoryNumber(INVENTORY_OBJECT)
     do
-        local i = 1
-        while i <= count do
-            names[#names + 1] = ll.GetInventoryName(INVENTORY_OBJECT, i)
+        local i = 0
+        while i < count do
+            names[#names + 1] = ll.GetInventoryName(INVENTORY_OBJECT, i + 1)
             i = i + 1
         end
     end
@@ -130,9 +174,9 @@ function ____exports.getItemsForObject(self, selfName, objectName)
     local items = {}
     local count = ll.GetInventoryNumber(INVENTORY_ALL)
     do
-        local i = 1
-        while i <= count do
-            local name = ll.GetInventoryName(INVENTORY_ALL, i)
+        local i = 0
+        while i < count do
+            local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
             local itemType = ll.GetInventoryType(name)
             if name ~= selfName and itemType ~= INVENTORY_OBJECT then
                 if ____exports.matchesObject(nil, name, objectName) then
@@ -155,43 +199,146 @@ function ____exports.targetItemName(self, fullName)
 end
 return ____exports
  end,
-["src.patcher.commands"] = function(...) 
+["patcher.autopatch"] = function(...) 
 local ____exports = {}
-local ____inventory = require("src.patcher.inventory")
+local takeSnapshot, diffSnapshot, getAffectedObjects, snapshot, selfName
+local ____inventory = require("patcher.inventory")
 local getObjectNames = ____inventory.getObjectNames
-local getItemsForObject = ____inventory.getItemsForObject
---- Handles the `patch` command.
--- 
--- When target is `"all"`, scans inventory for every object that has matching
--- scripts or items and queues them all. Otherwise validates that the named
--- object exists in inventory and queues it alone.
-function ____exports.handlePatch(self, selfName, target, startPatching)
-    if target == "all" then
-        local queue = {}
-        for ____, obj in ipairs(getObjectNames(nil)) do
-            local ____getItemsForObject_result_0 = getItemsForObject(nil, selfName, obj)
-            local scripts = ____getItemsForObject_result_0.scripts
-            local items = ____getItemsForObject_result_0.items
-            if #scripts > 0 or #items > 0 then
-                queue[#queue + 1] = obj
+local matchesObject = ____inventory.matchesObject
+function takeSnapshot(self)
+    local snap = {}
+    local count = ll.GetInventoryNumber(INVENTORY_ALL)
+    do
+        local i = 0
+        while i < count do
+            local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
+            if name ~= selfName and (string.find(name, "/", 1, true) or 0) - 1 >= 0 then
+                snap[name] = ll.GetInventoryKey(name)
+            end
+            i = i + 1
+        end
+    end
+    return snap
+end
+function diffSnapshot(self)
+    local changed = {}
+    local newSnap = takeSnapshot(nil)
+    for name in pairs(newSnap) do
+        if snapshot[name] ~= newSnap[name] then
+            changed[#changed + 1] = name
+        end
+    end
+    for name in pairs(snapshot) do
+        if newSnap[name] == nil then
+            changed[#changed + 1] = name
+        end
+    end
+    snapshot = newSnap
+    return changed
+end
+function getAffectedObjects(self, changedItems)
+    local objects = getObjectNames(nil)
+    local affected = {}
+    for ____, obj in ipairs(objects) do
+        for ____, item in ipairs(changedItems) do
+            if matchesObject(nil, item, obj) then
+                affected[#affected + 1] = obj
+                break
             end
         end
-        if #queue == 0 then
-            ll.OwnerSay("No patchable objects found, aborting.")
-            return
-        end
-        startPatching(nil, queue)
-    else
-        if ll.GetInventoryType(target) ~= INVENTORY_OBJECT then
-            ll.OwnerSay(("Object \"" .. target) .. "\" not found in inventory.")
-            return
-        end
-        startPatching(nil, {target})
     end
+    return affected
+end
+local enabled = false
+local debounceSeconds = 5
+snapshot = {}
+local debounceTimer = nil
+local pendingQueue = {}
+--- Callback set by index.ts to trigger a patch run.
+local triggerPatch = nil
+--- Callback set by index.ts to check if a patch is in progress.
+local checkBusy = nil
+--- Callback set by index.ts to push status messages.
+local pushMsg = nil
+selfName = ""
+--- Cancels any running debounce timer.
+local function cancelDebounce(self)
+    if debounceTimer then
+        LLTimers:off(debounceTimer)
+        debounceTimer = nil
+    end
+end
+--- Wires the autoupdate module to the patcher's state. Must be called once
+-- during initialization, before any other function.
+function ____exports.setup(self, ____self, trigger, busy, status)
+    selfName = ____self
+    triggerPatch = trigger
+    checkBusy = busy
+    pushMsg = status
+end
+--- Enables autoupdate and takes an initial inventory snapshot.
+function ____exports.enable(self)
+    cancelDebounce(nil)
+    enabled = true
+    snapshot = takeSnapshot(nil)
+    pendingQueue = {}
+end
+--- Disables autoupdate and cancels any pending debounce.
+function ____exports.disable(self)
+    enabled = false
+    cancelDebounce(nil)
+    pendingQueue = {}
+end
+function ____exports.isEnabled(self)
+    return enabled
+end
+function ____exports.getDebounceSeconds(self)
+    return debounceSeconds
+end
+function ____exports.setDebounceSeconds(self, n)
+    debounceSeconds = n
+end
+--- Called from the `changed` event handler when `CHANGED_INVENTORY` fires.
+-- Resets the debounce timer. When it fires, diffs the snapshot, matches
+-- changed items to target objects, and either triggers a patch run or
+-- merges into the pending queue if busy.
+function ____exports.onInventoryChanged(self)
+    if not enabled or checkBusy and checkBusy(nil) then
+        return
+    end
+    cancelDebounce(nil)
+    debounceTimer = LLTimers:once(
+        debounceSeconds,
+        function()
+            debounceTimer = nil
+            local changed = diffSnapshot(nil)
+            if #changed == 0 then
+                return
+            end
+            local affected = getAffectedObjects(nil, changed)
+            if #affected == 0 then
+                return
+            end
+            if triggerPatch and pushMsg then
+                pushMsg(
+                    nil,
+                    ((("Auto-update: " .. tostring(#changed)) .. " item(s) changed, patching ") .. tostring(#affected)) .. " object(s)..."
+                )
+                triggerPatch(nil, affected)
+            end
+        end
+    )
+end
+--- Returns and clears any pending autoupdate queue. Called by index.ts
+-- when a patch run completes to check for follow-up work.
+function ____exports.flushPending(self)
+    local queue = pendingQueue
+    pendingQueue = {}
+    return queue
 end
 return ____exports
  end,
-["src.patcher.effects"] = function(...) 
+["patcher.effects"] = function(...) 
 local ____exports = {}
 local WHITE = vector.one
 --- Shows floating text above the patcher prim.
@@ -238,12 +385,56 @@ function ____exports.stopParticles(self)
 end
 return ____exports
  end,
-["src.patcher.http"] = function(...) 
+["patcher.template"] = function(...) 
 local ____exports = {}
-local ____inventory = require("src.patcher.inventory")
+function ____exports.pageShell(self, baseUrl)
+    return ("<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" data-theme=\"dark\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><base href=\"" .. baseUrl) .. "/\"/><title>Patcher</title><link rel=\"icon\" href=\"data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg'&gt;&lt;text y='1em'&gt;📝&lt;/text&gt;&lt;/svg&gt;\"/><link rel=\"stylesheet\" href=\"//cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css\"/><script src=\"//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js\"></script><script>/*<![CDATA[*/document.addEventListener(\"alpine:init\",()=>{Alpine.data(\"patcher\",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$el.querySelectorAll(\"input[name=item]\")],t=[...this.$el.querySelectorAll(\".m input[type=checkbox]\")],l=[...this.$el.querySelectorAll(\"details\")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),l.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),l.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$el.querySelectorAll(\"input[name=item]\")].filter(t=>t.value.startsWith(e+\"/\")),l=t.every(e=>e.checked);t.forEach(e=>e.checked=!l),t.length>0&&(t[0].closest(\"details\").open=!0),this.sync()},updateObjBoxes(){this.$el.querySelectorAll(\".m input[type=checkbox]\").forEach(e=>{const t=e.closest(\".u\").querySelector(\".y\").textContent+\"/\",l=this.items.filter(e=>e.startsWith(t)).length,c=this.$el.querySelectorAll('input[name=item][value^=\"'+t+'\"]').length;e.checked=c>0&&l===c,e.indeterminate=l>0&&l<c})},sync(){this.items=[...this.$el.querySelectorAll(\"input[name=item]:checked\")].map(e=>e.value);const e=this.$el.querySelectorAll(\"input[name=item]\");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script defer=\"\" src=\"//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js\"></script><script src=\"//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js\"></script><style>:root{--_a:var(--pico-muted-color);--_b:var(--pico-muted-border-color);--_c:var(--pico-card-sectioning-background-color);--_d:var(--pico-border-radius);--_e:var(--pico-card-background-color)}b{font-weight:inherit}body>main{max-width:580px;margin:0 auto;padding:1.5rem 1rem}.l{font-size:1.25rem;margin:0 0 1rem;padding-bottom:.75rem;border-bottom:1px solid var(--_b);letter-spacing:-.02em}.aa{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}.aa label{font-size:.8rem;color:var(--_a);display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer}.aa label input[type=checkbox]{margin:0}.i{flex:1}.aa [type=submit],.aa button{width:auto;font-size:.75rem;font-weight:500;padding:.4rem .75rem;margin:0;white-space:nowrap}.aa svg{width:14px;height:14px;vertical-align:-2px}.x{display:flex;flex-direction:column;gap:1px;background:var(--_b);border:1px solid var(--_b);border-radius:var(--_d);overflow:hidden;margin-bottom:1rem}.u{background:var(--_e)}details{margin:0}details summary{list-style:none!important;padding:0}details summary::after{display:none!important}details summary::-webkit-details-marker{display:none!important}details summary::marker{display:none!important;content:none!important}details[open]>summary{margin-bottom:0!important}.m{display:flex;align-items:center;gap:.5rem;padding:.6rem .75rem;cursor:pointer;user-select:none}.m:hover{background:var(--_c)}.m input[type=checkbox]{margin:0;flex-shrink:0}.z{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.y{font-size:.85rem;font-weight:600;flex:1}.t{font-size:.65rem;color:var(--_a);background:var(--_c);padding:.1rem .4rem;border-radius:3px;flex-shrink:0}.n{color:var(--_a);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .n{transform:rotate(90deg)}.v{border-top:1px solid var(--_b);background:var(--_c)}.w{display:flex;align-items:center;gap:.5rem;padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;color:var(--_a);border-bottom:1px solid var(--_b)}.w:last-child{border-bottom:none}.w input[type=checkbox]{margin:0;flex-shrink:0}.w .r{flex:1}.s{font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;padding:.05rem .3rem;border-radius:3px}.c{color:var(--pico-primary);background:var(--pico-primary-focus)}.h{color:var(--_a);background:var(--_c)}.k{text-align:center;padding:2rem 1rem;color:var(--_a)}#c{font-size:.8rem}#c progress{margin-top:.5rem}.j{display:flex;align-items:center;gap:.5rem}.o{width:8px;height:8px;border-radius:50%;flex-shrink:0}.d{background:var(--pico-primary)}.e{background:#d29922;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}.p{margin-top:.5rem;max-height:160px;overflow-y:auto}.p p{margin:.1rem 0;color:var(--_a);font-size:.75rem}.p p:last-child{color:var(--pico-color)}.q{font-size:.75rem;color:var(--_a);margin-left:auto}.b{margin-bottom:.75rem;background:var(--_e);border:1px solid var(--_b);border-radius:var(--_d);overflow:hidden}.a{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--_a);padding:.4rem .75rem;border-bottom:1px solid var(--_b)}.f{display:flex;align-items:center;gap:.5rem;font-size:.8rem;padding:.5rem .75rem}.f label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--_a)}.f label input[type=checkbox]{margin:0}.g{margin-left:auto!important}.g input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center}</style></head><body><main hx-get=\"app\" hx-trigger=\"load\"><p aria-busy=\"true\">Loading</p></main><script>document.addEventListener(\"htmx:load\",()=>lucide.createIcons())</script></body></html>"
+end
+____exports.APP_FRAGMENT = "<h1 class=\"l\">Patcher</h1><form x-data=\"patcher\"><div class=\"aa\"><label><input type=\"checkbox\" x-bind:checked=\"allChecked\" x-on:change=\"toggleAll()\"/> All</label><b class=\"i\"></b><button type=\"submit\" hx-post=\"patch\" hx-target=\"#c\" x-show=\"items.length\" x-bind:disabled=\"items.length === 0\"><i data-lucide=\"play\"></i> Patch</button><button type=\"button\" hx-post=\"patch-all\" hx-target=\"#c\"><i data-lucide=\"layers\"></i> Patch All</button><button type=\"button\" class=\"secondary\" hx-get=\"objects\" hx-target=\"#b\"><i data-lucide=\"refresh-cw\"></i></button></div><div id=\"b\" hx-get=\"objects\" hx-trigger=\"load\" x-on:change=\"sync()\" x-on:htmx:after-swap.camel=\"sync()\"><p aria-busy=\"true\">Scanning inventory</p></div></form><div id=\"a\" hx-get=\"autoupdate\" hx-trigger=\"load\"></div><article id=\"c\"><div class=\"j\"><b class=\"o d\"></b><b>Ready</b></div></article>"
+return ____exports
+ end,
+["patcher.ui"] = function(...) 
+local ____exports = {}
+local ____inventory = require("patcher.inventory")
 local getObjectNames = ____inventory.getObjectNames
 local getItemsForObject = ____inventory.getItemsForObject
+local patternMatches = ____inventory.patternMatches
 local targetItemName = ____inventory.targetItemName
+local function itemRow(self, fullName, itemName, typeClass, typeLabel)
+    return ((((((("<div class=\"w\"><input type=\"checkbox\" name=\"item\" value=\"" .. fullName) .. "\" x-on:change=\"sync()\"/><b class=\"r z\">") .. itemName) .. "</b><b class=\"s ") .. typeClass) .. "\">") .. typeLabel) .. "</b></div>"
+end
+local function objHeader(self, escapedName, badge)
+    return ((((("<summary><div class=\"m\"><b class=\"n\">&#9654;</b><input type=\"checkbox\" x-on:click.stop x-on:change=\"toggleObject('" .. escapedName) .. "')\"/><b class=\"y z\">") .. escapedName) .. "</b><b class=\"t\">") .. badge) .. "</b></div></summary>"
+end
+local function objGroup(self, content)
+    return ("<details class=\"u\">" .. content) .. "</details>"
+end
+local function objItems(self, content)
+    return ("<div class=\"v\">" .. content) .. "</div>"
+end
+local function objList(self, content)
+    return ("<div class=\"x\">" .. content) .. "</div>"
+end
+local function statusBusy(self, index, total, pct)
+    return ((((("<div class=\"j\"><b class=\"o e\"></b><b>Patching</b><b class=\"q\">" .. tostring(index)) .. "/") .. tostring(total)) .. " (") .. tostring(pct)) .. "%)</b></div>"
+end
+local function progressBar(self, index, total)
+    return ((("<progress value=\"" .. tostring(index)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
+end
+local function logEntry(self, entry)
+    return ("<p>" .. entry) .. "</p>"
+end
+local function statusLog(self, content)
+    return ("<div class=\"p\">" .. content) .. "</div>"
+end
+local function autoUpdateOn(self, debounce)
+    return ("<div class=\"b\"><div class=\"a\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" checked=\"\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label><label class=\"g\">Delay <input type=\"number\" name=\"debounce\" value=\"" .. tostring(debounce)) .. "\" min=\"1\" max=\"60\" hx-post=\"autoupdate-debounce\" hx-target=\"#a\" hx-trigger=\"change\"/> s</label></div></div>"
+end
+local EMPTY_STATE = "<div class=\"k\">No patchable objects found in inventory.</div>"
+local STATUS_DONE = "<div class=\"j\"><b class=\"o d\"></b><b>Done</b></div>"
+local POLL_TRIGGER = "<div hx-get=\"poll\" hx-trigger=\"load\" hx-target=\"#c\"></div>"
+local AUTO_UPDATE_OFF = "<div class=\"b\"><div class=\"a\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label></div></div>"
+____exports.NO_ITEMS_SELECTED = "<div class=\"j\"><b class=\"o d\"></b><b>No items selected</b></div>"
 --- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(self, s)
     return ll.ReplaceSubString(
@@ -265,12 +456,16 @@ local function escapeHtml(self, s)
 end
 --- Builds a single item row with checkbox, name, and type badge.
 local function buildItemRow(self, fullItemName, typeClass, typeLabel)
-    local itemName = escapeHtml(
+    return itemRow(
         nil,
-        targetItemName(nil, fullItemName)
+        escapeHtml(nil, fullItemName),
+        escapeHtml(
+            nil,
+            targetItemName(nil, fullItemName)
+        ),
+        typeClass,
+        typeLabel
     )
-    local fullName = escapeHtml(nil, fullItemName)
-    return ((((((((((("<div class=\"item-row\">" .. "<input type=\"checkbox\" name=\"item\" value=\"") .. fullName) .. "\" x-on:change=\"sync()\" />") .. "<span class=\"item-name truncate\">") .. itemName) .. "</span>") .. "<span class=\"item-type ") .. typeClass) .. "\">") .. typeLabel) .. "</span>") .. "</div>"
 end
 --- Builds the object list HTML with expandable groups and per-item checkboxes.
 -- Each item checkbox has name="item" value="ObjectName/item-name".
@@ -290,24 +485,27 @@ function ____exports.buildObjectList(self, selfName)
             if #items > 0 then
                 parts[#parts + 1] = tostring(#items) .. "i"
             end
-            local badge = table.concat(parts, " ")
-            html = html .. "<details class=\"obj-group\">"
-            html = html .. ((((((((((((((("<summary>" .. "<div class=\"obj-header\">") .. "<span class=\"obj-toggle\">&#9654;</span>") .. "<input type=\"checkbox\"") .. " x-on:click.stop") .. " x-on:change=\"toggleObject('") .. escaped) .. "')\"") .. " />") .. "<span class=\"obj-name truncate\">") .. escaped) .. "</span>") .. "<span class=\"obj-badge\">") .. badge) .. "</span>") .. "</div>") .. "</summary>"
-            html = html .. "<div class=\"obj-items\">"
+            local itemsHtml = ""
             for ____, script in ipairs(scripts) do
-                html = html .. buildItemRow(nil, script, "item-type-script", "script")
+                itemsHtml = itemsHtml .. buildItemRow(nil, script, "item-type-script", "script")
             end
             for ____, item in ipairs(items) do
-                html = html .. buildItemRow(nil, item, "item-type-item", "item")
+                itemsHtml = itemsHtml .. buildItemRow(nil, item, "item-type-item", "item")
             end
-            html = html .. "</div>"
-            html = html .. "</details>"
+            html = html .. objGroup(
+                nil,
+                objHeader(
+                    nil,
+                    escaped,
+                    table.concat(parts, " ")
+                ) .. objItems(nil, itemsHtml)
+            )
         end
     end
     if html == "" then
-        return "<div class=\"empty-state\">No patchable objects found in inventory.</div>"
+        return EMPTY_STATE
     end
-    return ("<div class=\"obj-list\">" .. html) .. "</div>"
+    return objList(nil, html)
 end
 --- Builds a status fragment showing current patch progress.
 -- Includes an hx-get="poll" trigger to continue long polling while busy.
@@ -315,30 +513,33 @@ function ____exports.buildStatusFragment(self, busy, index, total, log)
     local html = ""
     if busy then
         local pct = if total > 0 then math.floor(index / total * 100) else 0
-        html = html .. ((((((((("<div class=\"status-header\">" .. "<span class=\"status-dot status-dot-busy\"></span>") .. "<span>Patching</span>") .. "<span class=\"status-pct\">") .. tostring(index)) .. "/") .. tostring(total)) .. " (") .. tostring(pct)) .. "%)</span>") .. "</div>"
-        html = html .. ((("<progress value=\"" .. tostring(index)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
+        html = html .. statusBusy(nil, index, total, pct)
+        html = html .. progressBar(nil, index, total)
     else
-        html = html .. (("<div class=\"status-header\">" .. "<span class=\"status-dot status-dot-ready\"></span>") .. "<span>Done</span>") .. "</div>"
+        html = html .. STATUS_DONE
     end
     if #log > 0 then
-        html = html .. "<div class=\"status-log\">"
+        local logHtml = ""
         for ____, entry in ipairs(log) do
-            html = html .. ("<p>" .. escapeHtml(nil, entry)) .. "</p>"
+            logHtml = logHtml .. logEntry(
+                nil,
+                escapeHtml(nil, entry)
+            )
         end
-        html = html .. "</div>"
+        html = html .. statusLog(nil, logHtml)
     end
     if busy then
-        html = html .. "<div hx-get=\"poll\" hx-trigger=\"load\" hx-target=\"#status\" hx-swap=\"innerHTML\"></div>"
+        html = html .. POLL_TRIGGER
     end
     return html
 end
---- Decodes a single URL-encoded value (+ → space, %XX → char).
+--- Decodes a single URL-encoded value (+ -> space, %XX -> char).
 -- Collects parts into an array and joins once to avoid O(N²) string concat.
 local function urlDecode(self, encoded)
     local result = (string.gsub(encoded, "+", " "))
     local parts = {}
-    local i = 1
     local len = #result
+    local i = 1
     while i <= len do
         local ch = string.sub(result, i, i)
         if ch == "%" and i + 2 <= len then
@@ -358,14 +559,28 @@ local function urlDecode(self, encoded)
     end
     return table.concat(parts, "")
 end
+--- Extracts the first value for a given key from a URL-encoded form body.
+function ____exports.parseFormValue(self, body, key)
+    for ____, pair in ipairs(string.split(body, "&")) do
+        local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
+        if eqIdx >= 0 and string.sub(pair, 1, eqIdx) == key then
+            return urlDecode(
+                nil,
+                string.sub(pair, eqIdx + 1 + 1)
+            )
+        end
+    end
+    return nil
+end
 --- Parses URL-encoded form body to extract selected item names.
 -- Body format: "item=ObjName/script.slua&item=ObjName/other.slua"
 -- 
 -- Returns an ordered queue of unique object names and a filter map of
--- object name → selected full item names.
+-- object name -> selected full item names.
 function ____exports.parseFormItems(self, body)
     local filter = {}
     local queue = {}
+    local objects = getObjectNames(nil)
     for ____, pair in ipairs(string.split(body, "&")) do
         local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
         if eqIdx < 0 then
@@ -378,28 +593,44 @@ function ____exports.parseFormItems(self, body)
                 )
                 local slashIdx = (string.find(fullName, "/", 1, true) or 0) - 1
                 if slashIdx >= 0 then
-                    local objName = string.sub(fullName, 1, slashIdx)
-                    if filter[objName] == nil then
-                        filter[objName] = {}
-                        queue[#queue + 1] = objName
+                    local prefix = string.sub(fullName, 1, slashIdx)
+                    if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
+                        local pattern = string.sub(prefix, 2, #prefix - 1)
+                        for ____, obj in ipairs(objects) do
+                            if patternMatches(nil, obj, pattern) then
+                                if filter[obj] == nil then
+                                    filter[obj] = {}
+                                    queue[#queue + 1] = obj
+                                end
+                                local ____filter_obj_1 = filter[obj]
+                                ____filter_obj_1[#____filter_obj_1 + 1] = fullName
+                            end
+                        end
+                    else
+                        if filter[prefix] == nil then
+                            filter[prefix] = {}
+                            queue[#queue + 1] = prefix
+                        end
+                        local ____filter_prefix_2 = filter[prefix]
+                        ____filter_prefix_2[#____filter_prefix_2 + 1] = fullName
                     end
-                    local ____filter_objName_1 = filter[objName]
-                    ____filter_objName_1[#____filter_objName_1 + 1] = fullName
                 end
             end
         end
     end
     return {queue = queue, filter = filter}
 end
+--- Builds the autoupdate controls reflecting current server state.
+-- Returned for GET /autoupdate and POST /autoupdate.
+function ____exports.buildAutoUpdateControls(self, enabled, debounce)
+    if enabled then
+        return autoUpdateOn(nil, debounce)
+    end
+    return AUTO_UPDATE_OFF
+end
 return ____exports
  end,
-["src.patcher.template"] = function(...) 
-local ____exports = {}
-____exports.PAGE_SHELL = "<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" data-theme=\"dark\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><base href=\"%BASE_URL%/\"/><title>Patcher</title><link rel=\"icon\" href=\"data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'&gt;&lt;text y='.9em' font-size='90'&gt;📝&lt;/text&gt;&lt;/svg&gt;\"/><link rel=\"stylesheet\" href=\"//cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css\"/><script src=\"//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js\"></script><script defer=\"defer\" src=\"//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js\"></script><script src=\"//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js\"></script><style>body>main{max-width:580px;margin:0 auto;padding:1.5rem 1rem}.app-header{font-size:1.25rem;margin:0 0 1rem;padding-bottom:.75rem;border-bottom:1px solid var(--pico-muted-border-color);letter-spacing:-.02em}.toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.75rem}.toolbar label{font-size:.8rem;color:var(--pico-muted-color);display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer}.toolbar label input[type=checkbox]{margin:0}.toolbar-spacer{flex:1}.toolbar [type=submit],.toolbar button{width:auto;font-size:.75rem;font-weight:500;padding:.4rem .75rem;margin:0;white-space:nowrap}.toolbar svg{width:14px;height:14px;vertical-align:-2px}.obj-list{display:flex;flex-direction:column;gap:1px;background:var(--pico-muted-border-color);border:1px solid var(--pico-muted-border-color);border-radius:var(--pico-border-radius);overflow:hidden;margin-bottom:1rem}.obj-group{background:var(--pico-card-background-color)}details{margin:0}details summary{list-style:none!important;padding:0}details summary::after{display:none!important}details summary::-webkit-details-marker{display:none!important}details summary::marker{display:none!important;content:none!important}details[open]>summary{margin-bottom:0!important}.obj-header{display:flex;align-items:center;gap:.5rem;padding:.6rem .75rem;cursor:pointer;user-select:none}.obj-header:hover{background:var(--pico-card-sectioning-background-color)}.obj-header input[type=checkbox]{margin:0;flex-shrink:0}.truncate{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.obj-name{font-size:.85rem;font-weight:600;flex:1}.obj-badge{font-size:.65rem;color:var(--pico-muted-color);background:var(--pico-card-sectioning-background-color);padding:.1rem .4rem;border-radius:3px;flex-shrink:0}.obj-toggle{color:var(--pico-muted-color);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .obj-toggle{transform:rotate(90deg)}.obj-items{border-top:1px solid var(--pico-muted-border-color);background:var(--pico-card-sectioning-background-color)}.item-row{display:flex;align-items:center;gap:.5rem;padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;color:var(--pico-muted-color);border-bottom:1px solid var(--pico-muted-border-color)}.item-row:last-child{border-bottom:none}.item-row input[type=checkbox]{margin:0;flex-shrink:0}.item-row .item-name{flex:1}.item-type{font-size:.65rem;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;padding:.05rem .3rem;border-radius:3px}.item-type-script{color:var(--pico-primary);background:var(--pico-primary-focus)}.item-type-item{color:var(--pico-muted-color);background:var(--pico-card-sectioning-background-color)}.empty-state{text-align:center;padding:2rem 1rem;color:var(--pico-muted-color)}#status{font-size:.8rem}#status progress{margin-top:.5rem}.status-header{display:flex;align-items:center;gap:.5rem}.status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}.status-dot-ready{background:var(--pico-primary)}.status-dot-busy{background:#d29922;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}.status-log{margin-top:.5rem;max-height:160px;overflow-y:auto}.status-log p{margin:.1rem 0;color:var(--pico-muted-color);font-size:.75rem}.status-log p:last-child{color:var(--pico-color)}.status-pct{font-size:.75rem;color:var(--pico-muted-color);margin-left:auto}</style></head><body><main hx-get=\"app\" hx-trigger=\"load\" hx-swap=\"innerHTML\"><p aria-busy=\"true\">Loading</p></main><script>document.addEventListener(\"htmx:load\",()=>lucide.createIcons())</script></body></html>"
-____exports.APP_FRAGMENT = "<h1 class=\"app-header\">Patcher</h1><form x-data=\"{\n  items: [],\n  allChecked: false,\n  get selectedCount() {\n    return this.items.length;\n  },\n  toggleAll() {\n    const boxes = [...$el.querySelectorAll('input[name=item]')];\n    const objBoxes = [...$el.querySelectorAll('.obj-header input[type=checkbox]')];\n    const details = [...$el.querySelectorAll('details')];\n    if (this.allChecked) {\n      this.items = [];\n      boxes.forEach(b =&gt; b.checked = false);\n      objBoxes.forEach(b =&gt; b.checked = false);\n      details.forEach(d =&gt; d.open = false);\n    } else {\n      this.items = boxes.map(b =&gt; { b.checked = true; return b.value; });\n      objBoxes.forEach(b =&gt; b.checked = true);\n      details.forEach(d =&gt; d.open = true);\n    }\n    this.allChecked = !this.allChecked;\n  },\n  toggleObject(objName) {\n    const boxes = [...$el.querySelectorAll('input[name=item]')]\n      .filter(b =&gt; b.value.startsWith(objName + '/'));\n    const allChecked = boxes.every(b =&gt; b.checked);\n    boxes.forEach(b =&gt; b.checked = !allChecked);\n    const det = boxes[0] &amp;&amp; boxes[0].closest('details');\n    if (det) det.open = true;\n    this.sync();\n  },\n  updateObjBoxes() {\n    $el.querySelectorAll('.obj-header input[type=checkbox]').forEach(b =&gt; {\n      const name = b.closest('.obj-group').querySelector('.obj-name').textContent;\n      const prefix = name + '/';\n      const selected = this.items.filter(i =&gt; i.startsWith(prefix)).length;\n      const total = $el.querySelectorAll('input[name=item][value^=&quot;' + prefix + '&quot;]').length;\n      b.checked = total &gt; 0 &amp;&amp; selected === total;\n      b.indeterminate = selected &gt; 0 &amp;&amp; selected &lt; total;\n    });\n  },\n  sync() {\n    this.items = [...$el.querySelectorAll('input[name=item]:checked')].map(b =&gt; b.value);\n    const allBoxes = $el.querySelectorAll('input[name=item]');\n    this.allChecked = this.items.length &gt; 0 &amp;&amp; this.items.length === allBoxes.length;\n    this.updateObjBoxes();\n  }\n}\"><div class=\"toolbar\"><label><input type=\"checkbox\" x-bind:checked=\"allChecked\" x-on:change=\"toggleAll()\"/> All</label><span class=\"toolbar-spacer\"></span><button type=\"submit\" hx-post=\"patch\" hx-target=\"#status\" hx-swap=\"innerHTML\" x-show=\"selectedCount &gt; 0\" x-bind:disabled=\"selectedCount === 0\"><i data-lucide=\"play\"></i> Patch</button><button type=\"button\" hx-post=\"patch-all\" hx-target=\"#status\" hx-swap=\"innerHTML\"><i data-lucide=\"layers\"></i> Patch All</button><button type=\"button\" class=\"secondary\" hx-get=\"objects\" hx-target=\"#objects\" hx-swap=\"innerHTML\"><i data-lucide=\"refresh-cw\"></i></button></div><div id=\"objects\" hx-get=\"objects\" hx-trigger=\"load\" hx-swap=\"innerHTML\" x-on:htmx:after-swap.camel=\"sync()\"><p aria-busy=\"true\">Scanning inventory</p></div></form><article id=\"status\"><div class=\"status-header\"><span class=\"status-dot status-dot-ready\"></span><span>Ready</span></div></article>"
-return ____exports
- end,
-["src.patcher.index"] = function(...) 
+["patcher.index"] = function(...) 
 -- Lua Library inline imports
 local function __TS__ArrayFilter(self, callbackfn, thisArg)
     local result = {}
@@ -414,29 +645,54 @@ local function __TS__ArrayFilter(self, callbackfn, thisArg)
 end
 -- End of Lua Library inline imports
 local ____exports = {}
-local statusFragment, respondPoll, respondHtml, patchQueue, queueIndex, busy, pollRequestId, pollTimer, statusLog
-local ____inventory = require("src.patcher.inventory")
+local logStatus, pushStatus, statusFragment, respondPoll, patchNext, startPatching, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, busy, timeoutTimer, pendingScripts, pendingItems, pollRequestId, pollTimer, statusLog
+local ____inventory = require("patcher.inventory")
 local getItemsForObject = ____inventory.getItemsForObject
+local getObjectNames = ____inventory.getObjectNames
 local targetItemName = ____inventory.targetItemName
-local ____commands = require("src.patcher.commands")
-local handlePatch = ____commands.handlePatch
-local ____effects = require("src.patcher.effects")
+local ____effects = require("patcher.effects")
 local setStatus = ____effects.setStatus
 local clearStatus = ____effects.clearStatus
 local startParticles = ____effects.startParticles
 local stopParticles = ____effects.stopParticles
-local ____template = require("src.patcher.template")
-local PAGE_SHELL = ____template.PAGE_SHELL
+local ____template = require("patcher.template")
+local pageShell = ____template.pageShell
 local APP_FRAGMENT = ____template.APP_FRAGMENT
-local ____http = require("src.patcher.http")
-local buildObjectList = ____http.buildObjectList
-local buildStatusFragment = ____http.buildStatusFragment
-local parseFormItems = ____http.parseFormItems
+local ____ui = require("patcher.ui")
+local buildObjectList = ____ui.buildObjectList
+local buildStatusFragment = ____ui.buildStatusFragment
+local parseFormItems = ____ui.parseFormItems
+local parseFormValue = ____ui.parseFormValue
+local buildAutoUpdateControls = ____ui.buildAutoUpdateControls
+local NO_ITEMS_SELECTED = ____ui.NO_ITEMS_SELECTED
+local ____autopatch = require("patcher.autopatch")
+local setupAutoUpdate = ____autopatch.setup
+local onInventoryChanged = ____autopatch.onInventoryChanged
+local flushPending = ____autopatch.flushPending
+local isAutoUpdateEnabled = ____autopatch.isEnabled
+local enableAutoUpdate = ____autopatch.enable
+local disableAutoUpdate = ____autopatch.disable
+local getDebounceSeconds = ____autopatch.getDebounceSeconds
+local setDebounceSeconds = ____autopatch.setDebounceSeconds
+function logStatus(self, message)
+    ll.OwnerSay(message)
+    statusLog[#statusLog + 1] = message
+    if #statusLog > 20 then
+        table.remove(statusLog, 1)
+    end
+end
+function pushStatus(self, message)
+    logStatus(nil, message)
+    if pollRequestId ~= "" then
+        respondPoll(nil)
+    end
+end
 function statusFragment(self)
+    local completed = if busy then math.max(0, queueIndex - 1) else 0
     return buildStatusFragment(
         nil,
         busy,
-        queueIndex,
+        completed,
         #patchQueue,
         statusLog
     )
@@ -456,56 +712,21 @@ function respondPoll(self)
         pollTimer = nil
     end
 end
-function respondHtml(self, requestId, body)
-    ll.SetContentType(requestId, CONTENT_TYPE_XHTML)
-    ll.HTTPResponse(requestId, 200, body)
-end
---- This script's inventory name, used to avoid patching ourselves.
-local SELF_NAME = ll.GetScriptName()
---- UUID of the object currently being patched.
-local currentObjectId
---- Inventory name of the object currently being patched.
-local currentObjectName = ""
-patchQueue = {}
---- Map of object name → selected full item names. Empty array = all items.
-local patchItemFilter = {}
-queueIndex = 0
-busy = false
---- Handle for the per-object timeout timer, cleared on successful response.
-local timeoutTimer = nil
---- Cached inventory scan for the current object, set by patchNext(), used by "pinned" handler.
-local pendingScripts = {}
-local pendingItems = {}
---- The HTTP-in URL assigned by the simulator.
-local httpUrl = ""
-pollRequestId = ""
-pollTimer = nil
-statusLog = {}
---- Appends a status message to the log and owner chat, without triggering a poll response.
-local function logStatus(self, message)
-    ll.OwnerSay(message)
-    statusLog[#statusLog + 1] = message
-    if #statusLog > 20 then
-        table.remove(statusLog, 1)
-    end
-end
---- Pushes a status message to the log and responds to any held poll request.
--- Also sends the message to owner chat.
-local function pushStatus(self, message)
-    logStatus(nil, message)
-    if pollRequestId ~= "" then
-        respondPoll(nil)
-    end
-end
---- Advances to the next object in the queue. Rezzes it with PIN, sets up a
--- timeout, and waits for the bootstrap handshake. Clears state when the
--- queue is exhausted.
-local function patchNext(self)
+function patchNext(self)
     if queueIndex >= #patchQueue then
         busy = false
         patchQueue = {}
         patchItemFilter = {}
         queueIndex = 0
+        local pending = flushPending(nil)
+        if #pending > 0 then
+            pushStatus(
+                nil,
+                ("Auto-update: patching " .. tostring(#pending)) .. " queued object(s)..."
+            )
+            startPatching(nil, pending, nil, false)
+            return
+        end
         clearStatus(nil)
         pushStatus(nil, "All objects patched.")
         return
@@ -565,18 +786,53 @@ local function patchNext(self)
         end
     )
 end
---- Initializes the queue and kicks off the first patch.
-local function startPatching(self, queue, itemFilter)
+function startPatching(self, queue, itemFilter, resetLog)
+    if resetLog == nil then
+        resetLog = true
+    end
     patchQueue = queue
     patchItemFilter = itemFilter or ({})
     queueIndex = 0
     busy = true
-    statusLog = {}
+    if resetLog then
+        statusLog = {}
+    end
     pushStatus(
         nil,
         ("Patching " .. tostring(#queue)) .. " object(s)..."
     )
     patchNext(nil)
+end
+function respondHtml(self, requestId, body)
+    ll.SetContentType(requestId, CONTENT_TYPE_XHTML)
+    ll.HTTPResponse(requestId, 200, body)
+end
+SELF_NAME = ll.GetScriptName()
+currentObjectName = ""
+patchQueue = {}
+patchItemFilter = {}
+queueIndex = 0
+busy = false
+timeoutTimer = nil
+pendingScripts = {}
+pendingItems = {}
+--- The HTTP-in URL assigned by the simulator.
+local httpUrl = ""
+pollRequestId = ""
+pollTimer = nil
+statusLog = {}
+--- Releases the current HTTP-in URL and requests a new one.
+local function refreshUrl(self)
+    pollRequestId = ""
+    if pollTimer then
+        LLTimers:off(pollTimer)
+        pollTimer = nil
+    end
+    if httpUrl ~= "" then
+        ll.ReleaseURL(httpUrl)
+        httpUrl = ""
+    end
+    ll.RequestURL()
 end
 LLEvents:on(
     "http_request",
@@ -596,7 +852,7 @@ LLEvents:on(
                 respondHtml(
                     nil,
                     requestId,
-                    ll.ReplaceSubString(PAGE_SHELL, "%BASE_URL%", httpUrl, 0)
+                    pageShell(nil, httpUrl)
                 )
             elseif url == "/app" then
                 respondHtml(nil, requestId, APP_FRAGMENT)
@@ -625,6 +881,16 @@ LLEvents:on(
                         respondPoll(nil)
                     end
                 )
+            elseif url == "/autoupdate" then
+                respondHtml(
+                    nil,
+                    requestId,
+                    buildAutoUpdateControls(
+                        nil,
+                        isAutoUpdateEnabled(nil),
+                        getDebounceSeconds(nil)
+                    )
+                )
             else
                 ll.HTTPResponse(requestId, 404, "Not found")
             end
@@ -642,7 +908,7 @@ LLEvents:on(
                 local queue = ____parseFormItems_result_1.queue
                 local filter = ____parseFormItems_result_1.filter
                 if #queue == 0 then
-                    respondHtml(nil, requestId, "<div class=\"status-header\"><span class=\"status-dot status-dot-ready\"></span><span>No items selected.</span></div>")
+                    respondHtml(nil, requestId, NO_ITEMS_SELECTED)
                     return
                 end
                 startPatching(nil, queue, filter)
@@ -660,11 +926,51 @@ LLEvents:on(
                     )
                     return
                 end
-                handlePatch(nil, SELF_NAME, "all", startPatching)
+                local queue = {}
+                for ____, obj in ipairs(getObjectNames(nil)) do
+                    local ____getItemsForObject_result_2 = getItemsForObject(nil, SELF_NAME, obj)
+                    local scripts = ____getItemsForObject_result_2.scripts
+                    local items = ____getItemsForObject_result_2.items
+                    if #scripts > 0 or #items > 0 then
+                        queue[#queue + 1] = obj
+                    end
+                end
+                if #queue > 0 then
+                    startPatching(nil, queue)
+                end
                 respondHtml(
                     nil,
                     requestId,
                     statusFragment(nil)
+                )
+            elseif url == "/autoupdate" then
+                if parseFormValue(nil, body, "enabled") == "on" then
+                    enableAutoUpdate(nil)
+                else
+                    disableAutoUpdate(nil)
+                end
+                respondHtml(
+                    nil,
+                    requestId,
+                    buildAutoUpdateControls(
+                        nil,
+                        isAutoUpdateEnabled(nil),
+                        getDebounceSeconds(nil)
+                    )
+                )
+            elseif url == "/autoupdate-debounce" then
+                local seconds = tonumber(parseFormValue(nil, body, "debounce") or "")
+                if seconds ~= nil and seconds >= 1 and seconds <= 60 then
+                    setDebounceSeconds(nil, seconds)
+                end
+                respondHtml(
+                    nil,
+                    requestId,
+                    buildAutoUpdateControls(
+                        nil,
+                        isAutoUpdateEnabled(nil),
+                        getDebounceSeconds(nil)
+                    )
                 )
             else
                 ll.HTTPResponse(requestId, 404, "Not found")
@@ -686,6 +992,27 @@ LLEvents:on(
                     ll.OwnerSay(httpUrl)
                 else
                     ll.OwnerSay("HTTP URL not yet available.")
+                end
+            elseif message == "auto" or string.find(message, "auto ", 1, true) == 1 then
+                local arg = ll.StringTrim(
+                    string.sub(message, 6),
+                    STRING_TRIM
+                )
+                if arg ~= "" then
+                    local seconds = tonumber(arg)
+                    if seconds ~= nil and seconds >= 1 then
+                        setDebounceSeconds(nil, seconds)
+                        enableAutoUpdate(nil)
+                        ll.OwnerSay(("Auto-update enabled (" .. tostring(seconds)) .. "s debounce).")
+                    else
+                        ll.OwnerSay("Usage: /7 auto [seconds]")
+                    end
+                elseif isAutoUpdateEnabled(nil) then
+                    disableAutoUpdate(nil)
+                    ll.OwnerSay("Auto-update disabled.")
+                else
+                    enableAutoUpdate(nil)
+                    ll.OwnerSay(("Auto-update enabled (" .. tostring(getDebounceSeconds(nil))) .. "s debounce).")
                 end
             end
         elseif channel == COMM_CHANNEL and busy then
@@ -723,11 +1050,44 @@ LLEvents:on(
         end
     end
 )
+LLEvents:on(
+    "on_rez",
+    function()
+        refreshUrl(nil)
+    end
+)
+LLEvents:on(
+    "attach",
+    function()
+        refreshUrl(nil)
+    end
+)
+LLEvents:on(
+    "changed",
+    function(change)
+        if bit32.btest(change, CHANGED_INVENTORY) then
+            onInventoryChanged(nil)
+        end
+        if bit32.btest(
+            change,
+            bit32.bor(CHANGED_REGION, CHANGED_REGION_START)
+        ) then
+            refreshUrl(nil)
+        end
+    end
+)
 ll.Listen(CMD_CHANNEL, "", NULL_KEY, "")
 ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
 ll.RequestURL()
+setupAutoUpdate(
+    nil,
+    SELF_NAME,
+    startPatching,
+    function() return busy end,
+    pushStatus
+)
 return ____exports
  end,
 }
-local ____entry = require("src.patcher.index", ...)
+local ____entry = require("patcher.index", ...)
 return ____entry

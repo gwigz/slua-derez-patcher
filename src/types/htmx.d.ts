@@ -1,5 +1,12 @@
 /// <reference types="typed-htmx" />
 
+declare function h(
+  tag: string | ((props: Record<string, unknown>) => string),
+  props: Record<string, unknown> | null,
+  ...children: unknown[]
+): string;
+declare function Fragment(props: { children?: unknown }): string;
+
 interface AlpineAttributes {
   "x-data"?: string;
   "x-init"?: string;
@@ -27,7 +34,6 @@ type HtmlAttributes = HtmxAttributes &
 
 declare namespace JSX {
   type Element = string;
-
   interface IntrinsicElements {
     [tag: string]: HtmlAttributes;
   }

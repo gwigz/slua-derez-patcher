@@ -1,0 +1,13 @@
+{
+  "include": ["build.ts", "src/types/html-minifier-terser.d.ts"],
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["@types/bun"],
+  },
+}

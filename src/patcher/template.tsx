@@ -1,27 +1,115 @@
-/** @jsx h */
-/** @jsxFrag Fragment */
-
 /** Build-time page templates. Produces HTML strings embedded into the Lua bundle. */
-import { h, Fragment } from "./jsx";
 
-export function PageShell() {
+/** Minimal DOM element subset for typechecking Alpine component code. */
+interface AlpineElement {
+  checked: boolean;
+  indeterminate: boolean;
+  value: string;
+  open: boolean;
+  textContent: string;
+  closest(selector: string): AlpineElement;
+  querySelectorAll(selector: string): AlpineElement[];
+  querySelector(selector: string): AlpineElement;
+}
+
+/** Patcher Alpine.js component: state, computed properties, and methods. */
+interface PatcherComponent {
+  $el: AlpineElement;
+  items: string[];
+  allChecked: boolean;
+  toggleAll(): void;
+  toggleObject(objName: string): void;
+  updateObjBoxes(): void;
+  sync(): void;
+}
+
+/** Alpine component factory: serialized at build time via .toString(). */
+const patcherData = function () {
+  return {
+    items: [] as string[],
+    allChecked: false,
+    toggleAll(this: PatcherComponent) {
+      const boxes = [...this.$el.querySelectorAll("input[name=item]")];
+      const objBoxes = [...this.$el.querySelectorAll(".obj-header input[type=checkbox]")];
+      const details = [...this.$el.querySelectorAll("details")];
+
+      if (this.allChecked) {
+        this.items = [];
+
+        boxes.forEach((b) => (b.checked = false));
+        objBoxes.forEach((b) => (b.checked = false));
+        details.forEach((d) => (d.open = false));
+      } else {
+        this.items = boxes.map((b) => {
+          b.checked = true;
+          return b.value;
+        });
+
+        objBoxes.forEach((b) => (b.checked = true));
+        details.forEach((d) => (d.open = true));
+      }
+
+      this.allChecked = !this.allChecked;
+    },
+    toggleObject(this: PatcherComponent, objName: string) {
+      const boxes = [...this.$el.querySelectorAll("input[name=item]")].filter((b) =>
+        b.value.startsWith(objName + "/"),
+      );
+
+      const allChecked = boxes.every((b) => b.checked);
+
+      boxes.forEach((b) => (b.checked = !allChecked));
+
+      if (boxes.length > 0) {
+        boxes[0].closest("details").open = true;
+      }
+
+      this.sync();
+    },
+    updateObjBoxes(this: PatcherComponent) {
+      this.$el.querySelectorAll(".obj-header input[type=checkbox]").forEach((b) => {
+        const name = b.closest(".obj-group").querySelector(".obj-name").textContent;
+        const prefix = name + "/";
+        const selected = this.items.filter((i) => i.startsWith(prefix)).length;
+        const total = this.$el.querySelectorAll('input[name=item][value^="' + prefix + '"]').length;
+
+        b.checked = total > 0 && selected === total;
+        b.indeterminate = selected > 0 && selected < total;
+      });
+    },
+    sync(this: PatcherComponent) {
+      this.items = [...this.$el.querySelectorAll("input[name=item]:checked")].map((b) => b.value);
+
+      const allBoxes = this.$el.querySelectorAll("input[name=item]");
+
+      this.allChecked = this.items.length > 0 && this.items.length === allBoxes.length;
+      this.updateObjBoxes();
+    },
+  };
+};
+
+export function pageShell(baseUrl: string) {
   return (
     <html xmlns="http://www.w3.org/1999/xhtml" lang="en" data-theme="dark">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <base href="%BASE_URL%/" />
+        <base href={baseUrl + "/"} />
         <title>Patcher</title>
         <link
           rel="icon"
-          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>"
+          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text y='1em'>📝</text></svg>"
         />
         <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
         <script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
+        <script>
+          {`/*<![CDATA[*/document.addEventListener('alpine:init',()=>{Alpine.data('patcher',${patcherData.toString()})})/*]]>*/`}
+        </script>
         <script defer src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
         <script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script>
         <style>
           {`
+            b { font-weight: inherit; }
             body > main {
               max-width: 580px;
               margin: 0 auto;
@@ -178,11 +266,55 @@ export function PageShell() {
             .status-log p { margin: 0.1rem 0; color: var(--pico-muted-color); font-size: 0.75rem; }
             .status-log p:last-child { color: var(--pico-color); }
             .status-pct { font-size: 0.75rem; color: var(--pico-muted-color); margin-left: auto; }
+
+            /* Auto-update */
+            .autoupdate-panel {
+              margin-bottom: 0.75rem;
+              background: var(--pico-card-background-color);
+              border: 1px solid var(--pico-muted-border-color);
+              border-radius: var(--pico-border-radius);
+              overflow: hidden;
+            }
+            .autoupdate-header {
+              font-size: 0.7rem;
+              font-weight: 600;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+              color: var(--pico-muted-color);
+              padding: 0.4rem 0.75rem;
+              border-bottom: 1px solid var(--pico-muted-border-color);
+            }
+            .autoupdate-bar {
+              display: flex;
+              align-items: center;
+              gap: 0.5rem;
+              font-size: 0.8rem;
+              padding: 0.5rem 0.75rem;
+            }
+            .autoupdate-bar label {
+              display: flex;
+              align-items: center;
+              gap: 0.4rem;
+              margin: 0;
+              cursor: pointer;
+              color: var(--pico-muted-color);
+            }
+            .autoupdate-bar label input[type="checkbox"] { margin: 0; }
+            .debounce-label {
+              margin-left: auto !important;
+            }
+            .debounce-label input[type="number"] {
+              width: 3.5rem;
+              font-size: 0.75rem;
+              padding: 0.2rem 0.4rem;
+              margin: 0;
+              text-align: center;
+            }
           `}
         </style>
       </head>
       <body>
-        <main hx-get="app" hx-trigger="load" hx-swap="innerHTML">
+        <main hx-get="app" hx-trigger="load">
           <p aria-busy="true">Loading</p>
         </main>
         <script>{"document.addEventListener('htmx:load', () => lucide.createIcons())"}</script>
@@ -191,111 +323,54 @@ export function PageShell() {
   );
 }
 
-const ALPINE_STATE = `{
-  items: [],
-  allChecked: false,
-  get selectedCount() {
-    return this.items.length;
-  },
-  toggleAll() {
-    const boxes = [...$el.querySelectorAll('input[name=item]')];
-    const objBoxes = [...$el.querySelectorAll('.obj-header input[type=checkbox]')];
-    const details = [...$el.querySelectorAll('details')];
-    if (this.allChecked) {
-      this.items = [];
-      boxes.forEach(b => b.checked = false);
-      objBoxes.forEach(b => b.checked = false);
-      details.forEach(d => d.open = false);
-    } else {
-      this.items = boxes.map(b => { b.checked = true; return b.value; });
-      objBoxes.forEach(b => b.checked = true);
-      details.forEach(d => d.open = true);
-    }
-    this.allChecked = !this.allChecked;
-  },
-  toggleObject(objName) {
-    const boxes = [...$el.querySelectorAll('input[name=item]')]
-      .filter(b => b.value.startsWith(objName + '/'));
-    const allChecked = boxes.every(b => b.checked);
-    boxes.forEach(b => b.checked = !allChecked);
-    const det = boxes[0] && boxes[0].closest('details');
-    if (det) det.open = true;
-    this.sync();
-  },
-  updateObjBoxes() {
-    $el.querySelectorAll('.obj-header input[type=checkbox]').forEach(b => {
-      const name = b.closest('.obj-group').querySelector('.obj-name').textContent;
-      const prefix = name + '/';
-      const selected = this.items.filter(i => i.startsWith(prefix)).length;
-      const total = $el.querySelectorAll('input[name=item][value^="' + prefix + '"]').length;
-      b.checked = total > 0 && selected === total;
-      b.indeterminate = selected > 0 && selected < total;
-    });
-  },
-  sync() {
-    this.items = [...$el.querySelectorAll('input[name=item]:checked')].map(b => b.value);
-    const allBoxes = $el.querySelectorAll('input[name=item]');
-    this.allChecked = this.items.length > 0 && this.items.length === allBoxes.length;
-    this.updateObjBoxes();
-  }
-}`;
+export const APP_FRAGMENT = (
+  <Fragment>
+    <h1 class="app-header">Patcher</h1>
 
-export function AppFragment() {
-  return (
-    <Fragment>
-      <h1 class="app-header">Patcher</h1>
-
-      <form x-data={ALPINE_STATE}>
-        <div class="toolbar">
-          <label>
-            <input
-              type="checkbox"
-              {...{ "x-bind:checked": "allChecked", "x-on:change": "toggleAll()" }}
-            />{" "}
-            All
-          </label>
-          <span class="toolbar-spacer"></span>
-          <button
-            type="submit"
-            hx-post="patch"
-            hx-target="#status"
-            hx-swap="innerHTML"
-            x-show="selectedCount > 0"
-            {...{ "x-bind:disabled": "selectedCount === 0" }}
-          >
-            <i data-lucide="play"></i> Patch
-          </button>
-          <button type="button" hx-post="patch-all" hx-target="#status" hx-swap="innerHTML">
-            <i data-lucide="layers"></i> Patch All
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            hx-get="objects"
-            hx-target="#objects"
-            hx-swap="innerHTML"
-          >
-            <i data-lucide="refresh-cw"></i>
-          </button>
-        </div>
-
-        <div
-          id="objects"
-          hx-get="objects"
-          hx-trigger="load"
-          hx-swap="innerHTML"
-          {...{ "x-on:htmx:after-swap.camel": "sync()" }}
+    <form x-data="patcher">
+      <div class="toolbar">
+        <label>
+          <input
+            type="checkbox"
+            {...{ "x-bind:checked": "allChecked", "x-on:change": "toggleAll()" }}
+          />{" "}
+          All
+        </label>
+        <b class="toolbar-spacer"></b>
+        <button
+          type="submit"
+          hx-post="patch"
+          hx-target="#status"
+          x-show="items.length"
+          {...{ "x-bind:disabled": "items.length === 0" }}
         >
-          <p aria-busy="true">Scanning inventory</p>
-        </div>
-      </form>
+          <i data-lucide="play"></i> Patch
+        </button>
+        <button type="button" hx-post="patch-all" hx-target="#status">
+          <i data-lucide="layers"></i> Patch All
+        </button>
+        <button type="button" class="secondary" hx-get="objects" hx-target="#objects">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+      </div>
 
-      <article id="status">
-        <div class="status-header">
-          <span class="status-dot status-dot-ready"></span>
-          <span>Ready</span>
-        </div>
-      </article>
-    </Fragment>
-  );
-}
+      <div
+        id="objects"
+        hx-get="objects"
+        hx-trigger="load"
+        {...{ "x-on:change": "sync()", "x-on:htmx:after-swap.camel": "sync()" }}
+      >
+        <p aria-busy="true">Scanning inventory</p>
+      </div>
+    </form>
+
+    <div id="autoupdate" hx-get="autoupdate" hx-trigger="load" />
+
+    <article id="status">
+      <div class="status-header">
+        <b class="status-dot status-dot-ready"></b>
+        <b>Ready</b>
+      </div>
+    </article>
+  </Fragment>
+);

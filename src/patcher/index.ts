@@ -12,11 +12,27 @@
  *   4. Bootstrap confirms with "ready"
  *   5. Patcher derezzes object back to inventory
  */
-import { getItemsForObject, targetItemName } from "./inventory";
-import { handlePatch } from "./commands";
+import { getItemsForObject, getObjectNames, targetItemName } from "./inventory";
 import { setStatus, clearStatus, startParticles, stopParticles } from "./effects";
-import { PAGE_SHELL, APP_FRAGMENT } from "./template";
-import { buildObjectList, buildStatusFragment, parseFormItems } from "./http";
+import { pageShell, APP_FRAGMENT } from "./template";
+import {
+  buildObjectList,
+  buildStatusFragment,
+  parseFormItems,
+  parseFormValue,
+  buildAutoUpdateControls,
+  NO_ITEMS_SELECTED,
+} from "./ui";
+import {
+  setup as setupAutoUpdate,
+  onInventoryChanged,
+  flushPending,
+  isEnabled as isAutoUpdateEnabled,
+  enable as enableAutoUpdate,
+  disable as disableAutoUpdate,
+  getDebounceSeconds,
+  setDebounceSeconds,
+} from "./autopatch";
 
 /** This script's inventory name, used to avoid patching ourselves. */
 const SELF_NAME = ll.GetScriptName();
@@ -32,7 +48,7 @@ let currentObjectName = "";
 /** Ordered list of object names waiting to be patched. */
 let patchQueue: string[] = [];
 
-/** Map of object name → selected full item names. Empty array = all items. */
+/** Map of object name -> selected full item names. Empty array = all items. */
 let patchItemFilter: Record<string, string[]> = {};
 
 /** Current position in the patch queue (0-indexed). */
@@ -57,11 +73,11 @@ let httpUrl = "";
  * Held long-poll request ID, or empty string when no poll is pending.
  *
  * Long-poll flow:
- *   1. Browser GET /poll → SLua stores requestId here, starts 20s timer
- *   2. On patch state change → pushStatus() calls respondPoll() immediately
- *   3. Response includes hx-get="poll" hx-trigger="load" → browser loops
- *   4. If no update in 20s → timer fires respondPoll() with unchanged status
- *   5. When patching completes → response omits hx-trigger, loop stops
+ *   1. Browser GET /poll -> SLua stores requestId here, starts 20s timer
+ *   2. On patch state change -> pushStatus() calls respondPoll() immediately
+ *   3. Response includes hx-get="poll" hx-trigger="load" -> browser loops
+ *   4. If no update in 20s -> timer fires respondPoll() with unchanged status
+ *   5. When patching completes -> response omits hx-trigger, loop stops
  */
 let pollRequestId = "";
 
@@ -96,7 +112,11 @@ function pushStatus(message: string) {
 
 /** Builds a status fragment from current patch state. */
 function statusFragment() {
-  return buildStatusFragment(busy, queueIndex, patchQueue.length, statusLog);
+  // queueIndex is incremented when an object starts, not when it finishes.
+  // Show completed count (one less than current index) while busy.
+  const completed = busy ? math.max(0, queueIndex - 1) : 0;
+
+  return buildStatusFragment(busy, completed, patchQueue.length, statusLog);
 }
 
 /** Responds to the held long-poll request with current status. */
@@ -125,6 +145,15 @@ function patchNext() {
     patchQueue = [];
     patchItemFilter = {};
     queueIndex = 0;
+
+    // Check for pending autoupdate changes before declaring done
+    const pending = flushPending();
+
+    if (pending.length > 0) {
+      pushStatus(`Auto-update: patching ${pending.length} queued object(s)...`);
+      startPatching(pending, undefined, false);
+      return;
+    }
 
     clearStatus();
     pushStatus("All objects patched.");
@@ -199,16 +228,37 @@ function patchNext() {
 }
 
 /** Initializes the queue and kicks off the first patch. */
-function startPatching(queue: string[], itemFilter?: Record<string, string[]>) {
+function startPatching(queue: string[], itemFilter?: Record<string, string[]>, resetLog = true) {
   patchQueue = queue;
   patchItemFilter = itemFilter || {};
   queueIndex = 0;
   busy = true;
-  statusLog = [];
+
+  if (resetLog) {
+    statusLog = [];
+  }
 
   pushStatus(`Patching ${queue.length} object(s)...`);
 
   patchNext();
+}
+
+/** Releases the current HTTP-in URL and requests a new one. */
+function refreshUrl() {
+  // Cancel any held long-poll request (now invalid)
+  pollRequestId = "";
+
+  if (pollTimer) {
+    LLTimers.off(pollTimer);
+    pollTimer = null;
+  }
+
+  if (httpUrl !== "") {
+    ll.ReleaseURL(httpUrl);
+    httpUrl = "";
+  }
+
+  ll.RequestURL();
 }
 
 /** Sends an XHTML response so browsers render HTTP-in content correctly. */
@@ -237,7 +287,7 @@ LLEvents.on("http_request", (requestId, method, body) => {
   if (method === "GET") {
     if (url === "" || url === "/") {
       // Inject runtime base URL so relative hx-get/hx-post paths resolve correctly
-      respondHtml(requestId, PAGE_SHELL.replaceAll("%BASE_URL%", httpUrl));
+      respondHtml(requestId, pageShell(httpUrl));
     } else if (url === "/app") {
       respondHtml(requestId, APP_FRAGMENT);
     } else if (url === "/objects") {
@@ -261,6 +311,8 @@ LLEvents.on("http_request", (requestId, method, body) => {
 
         respondPoll();
       });
+    } else if (url === "/autoupdate") {
+      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()));
     } else {
       ll.HTTPResponse(requestId, 404, "Not found");
     }
@@ -274,10 +326,7 @@ LLEvents.on("http_request", (requestId, method, body) => {
       const { queue, filter } = parseFormItems(body);
 
       if (queue.length === 0) {
-        respondHtml(
-          requestId,
-          '<div class="status-header"><span class="status-dot status-dot-ready"></span><span>No items selected.</span></div>',
-        );
+        respondHtml(requestId, NO_ITEMS_SELECTED);
         return;
       }
 
@@ -290,9 +339,37 @@ LLEvents.on("http_request", (requestId, method, body) => {
         return;
       }
 
-      handlePatch(SELF_NAME, "all", startPatching);
+      const queue: string[] = [];
+
+      for (const obj of getObjectNames()) {
+        const { scripts, items } = getItemsForObject(SELF_NAME, obj);
+
+        if (scripts.length > 0 || items.length > 0) {
+          queue.push(obj);
+        }
+      }
+
+      if (queue.length > 0) {
+        startPatching(queue);
+      }
 
       respondHtml(requestId, statusFragment());
+    } else if (url === "/autoupdate") {
+      if (parseFormValue(body, "enabled") === "on") {
+        enableAutoUpdate();
+      } else {
+        disableAutoUpdate();
+      }
+
+      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()));
+    } else if (url === "/autoupdate-debounce") {
+      const seconds = tonumber(parseFormValue(body, "debounce") || "");
+
+      if (seconds !== undefined && seconds >= 1 && seconds <= 60) {
+        setDebounceSeconds(seconds);
+      }
+
+      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()));
     } else {
       ll.HTTPResponse(requestId, 404, "Not found");
     }
@@ -313,6 +390,26 @@ LLEvents.on("listen", (channel, _name, id, message) => {
         ll.OwnerSay(httpUrl);
       } else {
         ll.OwnerSay("HTTP URL not yet available.");
+      }
+    } else if (message === "auto" || message.startsWith("auto ")) {
+      const arg = message.substring(5).trim();
+
+      if (arg !== "") {
+        const seconds = tonumber(arg);
+
+        if (seconds !== undefined && seconds >= 1) {
+          setDebounceSeconds(seconds);
+          enableAutoUpdate();
+          ll.OwnerSay(`Auto-update enabled (${seconds}s debounce).`);
+        } else {
+          ll.OwnerSay("Usage: /7 auto [seconds]");
+        }
+      } else if (isAutoUpdateEnabled()) {
+        disableAutoUpdate();
+        ll.OwnerSay("Auto-update disabled.");
+      } else {
+        enableAutoUpdate();
+        ll.OwnerSay(`Auto-update enabled (${getDebounceSeconds()}s debounce).`);
       }
     }
     // Bootstrap protocol
@@ -366,8 +463,28 @@ LLEvents.on("listen", (channel, _name, id, message) => {
   }
 });
 
+LLEvents.on("on_rez", () => {
+  refreshUrl();
+});
+
+LLEvents.on("attach", () => {
+  refreshUrl();
+});
+
+LLEvents.on("changed", (change) => {
+  if ((change & CHANGED_INVENTORY) !== 0) {
+    onInventoryChanged();
+  }
+
+  if ((change & (CHANGED_REGION | CHANGED_REGION_START)) !== 0) {
+    refreshUrl();
+  }
+});
+
 // TODO: look into this NULL_KEY typing issue
 ll.Listen(CMD_CHANNEL, "", NULL_KEY as unknown as uuid, "");
 ll.Listen(COMM_CHANNEL, "", NULL_KEY as unknown as uuid, "");
 
 ll.RequestURL();
+
+setupAutoUpdate(SELF_NAME, startPatching, () => busy, pushStatus);

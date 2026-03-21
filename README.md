@@ -91,17 +91,14 @@ Scripts have a 3 second delay between each load (`ll.RemoteLoadScriptPin` is thr
 ├── build.ts                  Build script (template compilation + TSTL)
 ├── src/
 │   ├── bootstrap.ts          Standalone bootstrap script
-│   ├── web/                  Build-time only (JSX → HTML strings)
-│   │   ├── jsx.ts            Custom JSX factory: h() → string
-│   │   ├── jsx.d.ts          JSX type declarations (with typed-htmx)
-│   │   └── template.tsx      Page shell and app fragment templates
+│   ├── constants.ts          Shared constants (PIN, channels)
 │   └── patcher/
 │       ├── index.ts          Entry point, HTTP-in routing, state, patch flow
-│       ├── http.ts           HTML fragment builders, form parser
-│       ├── commands.ts       Command handlers (patch all)
+│       ├── ui.tsx             HTML fragment builders, form parser
+│       ├── template.tsx       Page shell and app fragment templates
 │       ├── inventory.ts      Pattern matching and inventory queries
 │       ├── effects.ts        Status text and particle effects
-│       └── template.ts       Auto-generated HTML constants (gitignored)
+│       └── autopatch.ts      Auto-patch on inventory changes
 └── dist/
     ├── patcher.slua          Bundled patcher script
     └── bootstrap.slua        Standalone bootstrap script
@@ -111,14 +108,15 @@ Scripts have a 3 second delay between each load (`ll.RemoteLoadScriptPin` is thr
 
 ```mermaid
 flowchart TD
-    A(src/web/template.tsx) -->|Bun require| B(build.ts)
-    B -->|PageShell & AppFragment| C(HTML strings)
-    C -->|minify-html| D(src/patcher/template.ts)
+    A(src/patcher/template.tsx) -->|Bun eval| B(build.ts)
+    C(src/patcher/ui.tsx) -->|Bun eval| B
+    B -->|minify HTML, compile to string concat| D(template.ts + ui.ts)
     D --> E(TSTL)
     F(src/patcher/*.ts) --> E
     G(src/bootstrap.ts) --> E
     E --> H(dist/patcher.slua)
     E --> I(dist/bootstrap.slua)
+    H -->|minify inline JS, shorten CSS classes| H
 ```
 
 ### Web UI Stack
@@ -145,14 +143,17 @@ Everything loads from CDN so the SLua script never serves static assets.
 
 All routes are defined in the `http_request` event handler in `src/patcher/index.ts`.
 
-| Method | Path         | Description                                   |
-| ------ | ------------ | --------------------------------------------- |
-| GET    | `/`          | Full page shell with base URL injected        |
-| GET    | `/app`       | App fragment (object list + controls)         |
-| GET    | `/objects`   | Object list with items and checkboxes         |
-| GET    | `/poll`      | Long poll -- held open until status changes   |
-| POST   | `/patch`     | Patch selected objects (form body with items) |
-| POST   | `/patch-all` | Patch all objects at once                     |
+| Method | Path                   | Description                                   |
+| ------ | ---------------------- | --------------------------------------------- |
+| GET    | `/`                    | Full page shell with base URL injected        |
+| GET    | `/app`                 | App fragment (object list + controls)         |
+| GET    | `/objects`             | Object list with items and checkboxes         |
+| GET    | `/poll`                | Long poll -- held open until status changes   |
+| POST   | `/patch`               | Patch selected objects (form body with items) |
+| POST   | `/patch-all`           | Patch all objects at once                     |
+| GET    | `/autoupdate`          | Auto-update controls fragment                 |
+| POST   | `/autoupdate`          | Toggle autoupdate on/off                      |
+| POST   | `/autoupdate-debounce` | Set autoupdate debounce interval              |
 
 ## Setup
 

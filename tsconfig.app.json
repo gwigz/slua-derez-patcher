@@ -1,0 +1,22 @@
+{
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "strict": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
+},
+  "tstl": {
+    "extension": "slua",
+    "luaTarget": "Luau",
+    "luaLibImport": "inline",
+    "luaPlugins": [{ "name": "@gwigz/slua-tstl-plugin" }],
+  },
+}

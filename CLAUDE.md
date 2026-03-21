@@ -61,6 +61,7 @@ The plugin rewrites these TypeScript idioms into optimized Luau:
 | `str.startsWith(x)`     | `string.find(str, x, 1, true) == 1`         |
 | `str.split(sep)`        | `string.split(str, sep)`                    |
 | `str.repeat(n)`         | `string.rep(str, n)`                        |
+| `str.replaceAll(a, b)`  | `ll.ReplaceSubString(str, a, b, 0)`         |
 | `str.substring(s, e)`   | `string.sub(str, s + 1, e)`                 |
 | `arr.includes(v)`       | `table.find(arr, v) ~= nil`                 |
 | `arr.indexOf(v)`        | `(table.find(arr, v) or 0) - 1`             |
@@ -90,14 +91,10 @@ The plugin rewrites these TypeScript idioms into optimized Luau:
 
 `math`, `string`, `table`, `bit32`, `buffer`, `coroutine`, `utf8`, `os`, `debug` all available as typed namespaces.
 
-### TSTL Pitfalls
-
-- **`ll.*` index parameters are 1-based.** SLua follows Lua convention, not LSL's 0-based indexing. Use `for (let i = 1; i <= count; i++)` when calling `ll.GetInventoryName`, `ll.GetLinkName`, etc.
-
 ### Things to Avoid
 
 - No `Map`/`Set`/`WeakMap` use plain tables or arrays
-- No `Object.keys()`/`Object.entries()` use `pairs()` or `ipairs()`
+- No `Object.keys()`/`Object.entries()` iterate with `for (const key in obj)` which compiles to `for key in pairs(obj)`. Do **not** use `for...of pairs()`, it compiles incorrectly.
 - No `delete` operator set to `nil` instead
 - No `async`/`await` use coroutines if needed
 - No DOM or Node.js APIs this targets SLua, not a browser or server

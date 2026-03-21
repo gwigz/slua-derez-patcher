@@ -64,11 +64,15 @@ export function matchesObject(name: string, objectName: string) {
 
   const prefix = name.substring(0, slashIdx);
 
+  if (prefix === objectName) {
+    return true;
+  }
+
   if (prefix.startsWith("{") && prefix.indexOf("}") === prefix.length - 1) {
     return patternMatches(objectName, prefix.substring(1, prefix.length - 1));
   }
 
-  return prefix === objectName;
+  return false;
 }
 
 /** Returns the names of all object-type items in the prim's inventory. */
@@ -76,7 +80,7 @@ export function getObjectNames() {
   const names: string[] = [];
   const count = ll.GetInventoryNumber(INVENTORY_OBJECT);
 
-  for (let i = 1; i <= count; i++) {
+  for (let i = 0; i < count; i++) {
     names.push(ll.GetInventoryName(INVENTORY_OBJECT, i));
   }
 
@@ -93,7 +97,7 @@ export function getItemsForObject(selfName: string, objectName: string) {
   const items: string[] = [];
   const count = ll.GetInventoryNumber(INVENTORY_ALL);
 
-  for (let i = 1; i <= count; i++) {
+  for (let i = 0; i < count; i++) {
     const name = ll.GetInventoryName(INVENTORY_ALL, i);
     const itemType = ll.GetInventoryType(name);
 
