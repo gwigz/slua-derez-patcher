@@ -14,8 +14,8 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@gwigz/slua-tstl-plugin": "^0.3.0",
-    "@gwigz/slua-types": "^0.3.0",
+    "@gwigz/slua-tstl-plugin": "^1.0.0",
+    "@gwigz/slua-types": "^1.0.0",
     "@types/bun": "latest",
     "@types/node": "^25.5.0",
     "@typescript-to-lua/language-extensions": "^1.19.0",

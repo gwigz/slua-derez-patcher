@@ -3,7 +3,7 @@ declare module "html-minifier-terser" {
     collapseWhitespace?: boolean;
     removeComments?: boolean;
     minifyCSS?: boolean;
-    minifyJS?: boolean;
+    minifyJS?: { output: { comments: RegExp } } | boolean;
     keepClosingSlash?: boolean;
   }
 

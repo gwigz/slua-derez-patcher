@@ -1,6 +1,6 @@
 {
   "files.associations": {
-    "*.slua": "luau"
+    "*.slua": "lua"
   },
   "typescript.tsconfig": "tsconfig.editor.json",
   "editor.formatOnSave": true,

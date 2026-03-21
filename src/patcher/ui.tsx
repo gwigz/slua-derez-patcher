@@ -1,135 +1,20 @@
-import { getObjectNames, getItemsForObject, patternMatches, targetItemName } from "./inventory";
-
-function itemRow(fullName: string, itemName: string, typeClass: string, typeLabel: string) {
-  return (
-    <div class="item-row">
-      <input type="checkbox" name="item" value={fullName} {...{ "x-on:change": "sync()" }} />
-      <b class="item-name truncate">{itemName}</b>
-      <b class={"item-type " + typeClass}>{typeLabel}</b>
-    </div>
-  );
-}
-
-function objHeader(escapedName: string, badge: string) {
-  return (
-    <summary>
-      <div class="obj-header">
-        <b class="obj-toggle">{"&#9654;"}</b>
-        <input
-          type="checkbox"
-          {...{
-            "x-on:click.stop": true,
-            "x-on:change": `toggleObject('${escapedName}')`,
-          }}
-        />
-        <b class="obj-name truncate">{escapedName}</b>
-        <b class="obj-badge">{badge}</b>
-      </div>
-    </summary>
-  );
-}
-
-function objGroup(content: string) {
-  return <details class="obj-group">{content}</details>;
-}
-
-function objItems(content: string) {
-  return <div class="obj-items">{content}</div>;
-}
-
-function objList(content: string) {
-  return <div class="obj-list">{content}</div>;
-}
-
-function statusBusy(index: string | number, total: string | number, pct: string | number) {
-  return (
-    <div class="status-header">
-      <b class="status-dot status-dot-busy"></b>
-      <b>Patching</b>
-      <b class="status-pct">
-        {index}/{total} ({pct}%)
-      </b>
-    </div>
-  );
-}
-
-function progressBar(index: string | number, total: string | number) {
-  return <progress value={index} max={total}></progress>;
-}
-
-function logEntry(entry: string) {
-  return <p>{entry}</p>;
-}
-
-function statusLog(content: string) {
-  return <div class="status-log">{content}</div>;
-}
-
-function autoUpdateOn(debounce: string | number) {
-  return (
-    <div class="autoupdate-panel">
-      <div class="autoupdate-header">Settings</div>
-      <div class="autoupdate-bar">
-        <label>
-          <input
-            type="checkbox"
-            name="enabled"
-            checked
-            hx-post="autoupdate"
-            hx-target="#autoupdate"
-          />
-          {" Auto-update"}
-        </label>
-        <label class="debounce-label">
-          {"Delay "}
-          <input
-            type="number"
-            name="debounce"
-            value={debounce}
-            min="1"
-            max="60"
-            hx-post="autoupdate-debounce"
-            hx-target="#autoupdate"
-            hx-trigger="change"
-          />
-          {" s"}
-        </label>
-      </div>
-    </div>
-  );
-}
+import {
+  getObjectNames,
+  getItemsForObject,
+  patternMatches,
+  targetItemName,
+  inventoryTypeLabel,
+} from "./inventory";
 
 const EMPTY_STATE = <div class="empty-state">No patchable objects found in inventory.</div>;
 
-const STATUS_DONE = (
-  <div class="status-header">
-    <b class="status-dot status-dot-ready"></b>
-    <b>Done</b>
-  </div>
-);
+const STATUS_DONE = <b>Done</b>;
 
 const POLL_TRIGGER = <div hx-get="poll" hx-trigger="load" hx-target="#status"></div>;
 
-const AUTO_UPDATE_OFF = (
-  <div class="autoupdate-panel">
-    <div class="autoupdate-header">Settings</div>
-    <div class="autoupdate-bar">
-      <label>
-        <input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#autoupdate" />
-        {" Auto-update"}
-      </label>
-    </div>
-  </div>
-);
+export const NO_ITEMS_SELECTED = <b>No items selected</b>;
 
-export const NO_ITEMS_SELECTED = (
-  <div class="status-header">
-    <b class="status-dot status-dot-ready"></b>
-    <b>No items selected</b>
-  </div>
-);
-
-// Runtime code (passes through unchanged)
+// --- Runtime code (compiled by TSTL to Luau) ---
 
 /** Escapes HTML special characters to prevent XSS. */
 function escapeHtml(s: string): string {
@@ -140,13 +25,20 @@ function escapeHtml(s: string): string {
     .replaceAll('"', "&quot;");
 }
 
-/** Builds a single item row with checkbox, name, and type badge. */
-function buildItemRow(fullItemName: string, typeClass: string, typeLabel: string) {
-  return itemRow(
-    escapeHtml(fullItemName),
-    escapeHtml(targetItemName(fullItemName)),
-    typeClass,
-    typeLabel,
+/** Builds an inventory row with a type-specific badge. */
+function buildItemRow(fullItemName: string) {
+  const typeLabel = inventoryTypeLabel(ll.GetInventoryType(fullItemName));
+  const escaped = escapeHtml(fullItemName);
+  const itemName = escapeHtml(targetItemName(fullItemName));
+
+  return (
+    <label class="item-row">
+      <input type="checkbox" name="item" value={escaped} {...{ "x-on:change": "sync()" }} />
+      <b class="item-name truncate" {...{ "tooltip-top": itemName }}>
+        {itemName}
+      </b>
+      <kbd {...{ secondary: true }}>{typeLabel}</kbd>
+    </label>
   );
 }
 
@@ -163,30 +55,35 @@ export function buildObjectList(selfName: string) {
 
     if (scripts.length > 0 || items.length > 0) {
       const escaped = escapeHtml(obj);
-
-      // Count badge
-      const parts: string[] = [];
-
-      if (scripts.length > 0) {
-        parts.push(scripts.length + "s");
-      }
-
-      if (items.length > 0) {
-        parts.push(items.length + "i");
-      }
-
-      // Item rows
       let itemsHtml = "";
 
       for (const script of scripts) {
-        itemsHtml += buildItemRow(script, "item-type-script", "script");
+        itemsHtml += buildItemRow(script);
       }
 
       for (const item of items) {
-        itemsHtml += buildItemRow(item, "item-type-item", "item");
+        itemsHtml += buildItemRow(item);
       }
 
-      html += objGroup(objHeader(escaped, parts.join(" ")) + objItems(itemsHtml));
+      html += (
+        <details class="obj-group">
+          <summary>
+            <div class="obj-header">
+              <b class="obj-toggle">{"&#9654;"}</b>
+              <input
+                type="checkbox"
+                {...{
+                  "x-on:click.stop": `toggleObject('${escaped}')`,
+                }}
+              />
+              <b class="obj-name truncate" {...{ "tooltip-top": escaped }}>
+                {escaped}
+              </b>
+            </div>
+          </summary>
+          <div class="obj-items">{itemsHtml}</div>
+        </details>
+      );
     }
   }
 
@@ -194,7 +91,7 @@ export function buildObjectList(selfName: string) {
     return EMPTY_STATE;
   }
 
-  return objList(html);
+  return html;
 }
 
 /**
@@ -205,10 +102,21 @@ export function buildStatusFragment(busy: boolean, index: number, total: number,
   let html = "";
 
   if (busy) {
-    const pct = total > 0 ? math.floor((index / total) * 100) : 0;
-
-    html += statusBusy(index, total, pct);
-    html += progressBar(index, total);
+    html += (
+      <>
+        <b>
+          Patching {index}/{total}
+        </b>
+        <progress value={index} max={total}></progress>
+      </>
+    );
+  } else if (total > 0) {
+    html += (
+      <>
+        <b>Done</b>
+        <progress value={total} max={total}></progress>
+      </>
+    );
   } else {
     html += STATUS_DONE;
   }
@@ -217,10 +125,10 @@ export function buildStatusFragment(busy: boolean, index: number, total: number,
     let logHtml = "";
 
     for (const entry of log) {
-      logHtml += logEntry(escapeHtml(entry));
+      logHtml += <p>{escapeHtml(entry)}</p>;
     }
 
-    html += statusLog(logHtml);
+    html += <div class="status-log">{logHtml}</div>;
   }
 
   if (busy) {
@@ -341,8 +249,62 @@ export function parseFormItems(body: string) {
  */
 export function buildAutoUpdateControls(enabled: boolean, debounce: number) {
   if (enabled) {
-    return autoUpdateOn(debounce);
+    return (
+      <article class="panel">
+        <div class="panel-header">Settings</div>
+        <div class="panel-body">
+          <label>
+            <input
+              type="checkbox"
+              name="enabled"
+              checked
+              hx-post="autoupdate"
+              hx-target="#autoupdate"
+            />
+            {" Auto-update"}
+          </label>
+          <label class="debounce-label">
+            {"Delay "}
+            <input
+              type="number"
+              name="debounce"
+              value={debounce}
+              min="1"
+              max="60"
+              hx-post="autoupdate-debounce"
+              hx-target="#autoupdate"
+              hx-trigger="change delay:500ms"
+            />
+            {" s"}
+          </label>
+        </div>
+      </article>
+    );
   }
 
-  return AUTO_UPDATE_OFF;
+  return (
+    <article class="panel">
+      <div class="panel-header">Settings</div>
+      <div class="panel-body">
+        <label>
+          <input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#autoupdate" />
+          {" Auto-update"}
+        </label>
+        <label class="debounce-label">
+          {"Delay "}
+          <input
+            type="number"
+            name="debounce"
+            value={debounce}
+            min="1"
+            max="60"
+            hx-post="autoupdate-debounce"
+            hx-target="#autoupdate"
+            hx-trigger="change delay:500ms"
+          />
+          {" s"}
+        </label>
+      </div>
+    </article>
+  );
 }

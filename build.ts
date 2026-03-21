@@ -1,7 +1,7 @@
 import type { Diagnostic } from "typescript";
 import * as tstl from "typescript-to-lua";
 import { minify } from "html-minifier-terser";
-import { Project, SyntaxKind } from "ts-morph";
+import { Node, Project, SyntaxKind } from "ts-morph";
 import { watch, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import * as constants from "./src/constants";
@@ -31,7 +31,7 @@ function Fragment({ children }) { if (children == null) return ""; if (Array.isA
 `;
 
 /** Extracts the leading JSDoc block from a source file and converts it to a Lua multiline comment. */
-function extractFileComment(sourcePath: string): string {
+function extractFileComment(sourcePath: string) {
   const source = readFileSync(resolve(sourcePath), "utf8");
   const match = source.match(/^\/\*\*\n([\s\S]*?)\s*\*\//);
 
@@ -64,10 +64,14 @@ function getConstantComments(): Record<string, string> {
 }
 
 /** Generates short CSS class names: a, b, ..., z, aa, ab, ... */
-function shortClassName(i: number): string {
-  if (i < 26) return String.fromCharCode(97 + i);
+function shortClassName(i: number) {
+  if (i < 26) {
+    return String.fromCharCode(97 + i);
+  }
+
   const first = Math.floor((i - 26) / 26);
   const second = (i - 26) % 26;
+
   return String.fromCharCode(97 + first) + String.fromCharCode(97 + second);
 }
 
@@ -79,10 +83,28 @@ interface ShorteningMap {
   booleanAttrs: string[];
 }
 
+interface SlotInfo {
+  originalText: string;
+  marker: string;
+  pos: number;
+  end: number;
+}
+
+interface InlineJsxEntry {
+  jsxNode: Node;
+  slots: SlotInfo[];
+  html: string;
+}
+
+interface InlineJsxFunction {
+  fn: import("ts-morph").FunctionDeclaration;
+  entries: InlineJsxEntry[];
+}
+
 /**
  * Builds a shortening map from concatenated HTML strings.
  * Extracts CSS class names, element IDs, CSS variable aliases, and boolean
- * attributes to collapse. Operates on raw HTML — never on compiled Lua.
+ * attributes to collapse. Operates on raw HTML, never on compiled Lua.
  */
 function buildShorteningMap(allHtml: string): ShorteningMap {
   // 1. CSS class names from <style> blocks
@@ -122,7 +144,7 @@ function buildShorteningMap(allHtml: string): ShorteningMap {
     ids.push([sortedIds[i], shortClassName(i)]);
   }
 
-  // 3. CSS var(--pico-*) aliases — only when aliasing saves bytes
+  // 3. CSS var(--pico-*) aliases, only when aliasing saves bytes
   const varRe = /var\(--pico-[a-z-]+\)/g;
   const varCounts = new Map<string, number>();
 
@@ -165,7 +187,7 @@ function buildShorteningMap(allHtml: string): ShorteningMap {
 
 /**
  * Applies all shortening transformations to an HTML string.
- * Safe to call on any fragment — patterns that don't match are no-ops.
+ * Safe to call on any fragment, patterns that don't match are no-ops.
  */
 function applyShorteningMap(html: string, map: ShorteningMap): string {
   // 1. Shorten CSS class names (longest-first to avoid substring collisions)
@@ -188,7 +210,7 @@ function applyShorteningMap(html: string, map: ShorteningMap): string {
     html = html.replaceAll(`#${long}`, `#${short}`);
   }
 
-  // 4. Collapse boolean attributes (checked="checked" → checked="")
+  // 4. Collapse boolean attributes (checked="checked" -> checked="")
   for (const attr of map.booleanAttrs) {
     html = html.replaceAll(`${attr}="${attr}"`, `${attr}=""`);
   }
@@ -272,15 +294,178 @@ function splitFragment(name: string, html: string) {
   return { segments, slotNames };
 }
 
-/** Returns true if a ts-morph node is or contains any JSX elements. */
-function hasJsx(node: import("ts-morph").Node): boolean {
+/** Returns true if a ts-morph node is or contains any JSX elements or fragments. */
+function hasJsx(node: Node): boolean {
   const kind = node.getKind();
   return (
     kind === SyntaxKind.JsxElement ||
     kind === SyntaxKind.JsxSelfClosingElement ||
+    kind === SyntaxKind.JsxFragment ||
     node.getDescendantsOfKind(SyntaxKind.JsxElement).length > 0 ||
-    node.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement).length > 0
+    node.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement).length > 0 ||
+    node.getDescendantsOfKind(SyntaxKind.JsxFragment).length > 0
   );
+}
+
+/** Returns true if a node is a JSX element, self-closing element, or fragment (unwraps parens). */
+function isJsxNode(node: Node): boolean {
+  if (Node.isParenthesizedExpression(node)) {
+    return isJsxNode(node.getExpression());
+  }
+
+  const kind = node.getKind();
+
+  return (
+    kind === SyntaxKind.JsxElement ||
+    kind === SyntaxKind.JsxSelfClosingElement ||
+    kind === SyntaxKind.JsxFragment
+  );
+}
+
+/** Returns true if a function body is exactly one return statement whose expression is JSX. */
+function isPureTemplate(fn: Node): boolean {
+  if (!Node.isFunctionDeclaration(fn)) return false;
+
+  const body = fn.getBody();
+
+  if (!body || !Node.isBlock(body)) return false;
+
+  const stmts = body.getStatements();
+
+  if (stmts.length !== 1 || !Node.isReturnStatement(stmts[0])) return false;
+
+  const expr = stmts[0].getExpression();
+
+  return expr !== undefined && isJsxNode(expr);
+}
+
+/** Returns true for literals, static object/array literals, and parenthesized static expressions. */
+function isStaticExpression(node: Node): boolean {
+  const kind = node.getKind();
+
+  if (
+    kind === SyntaxKind.StringLiteral ||
+    kind === SyntaxKind.NumericLiteral ||
+    kind === SyntaxKind.NoSubstitutionTemplateLiteral ||
+    kind === SyntaxKind.NullKeyword ||
+    kind === SyntaxKind.TrueKeyword ||
+    kind === SyntaxKind.FalseKeyword
+  ) {
+    return true;
+  }
+
+  if (Node.isParenthesizedExpression(node)) {
+    return isStaticExpression(node.getExpression());
+  }
+
+  if (Node.isObjectLiteralExpression(node)) {
+    return node.getProperties().every((prop) => {
+      if (!Node.isPropertyAssignment(prop)) return false;
+      const init = prop.getInitializer();
+      return init !== undefined && isStaticExpression(init);
+    });
+  }
+
+  if (Node.isArrayLiteralExpression(node)) {
+    return node.getElements().every((el) => isStaticExpression(el));
+  }
+
+  return false;
+}
+
+/** Walks a function body and collects root-level JSX nodes (not nested inside other JSX). */
+function collectInlineJsxNodes(fn: import("ts-morph").FunctionDeclaration): Node[] {
+  const body = fn.getBody();
+
+  if (!body) return [];
+
+  const allJsx: Node[] = [
+    ...body.getDescendantsOfKind(SyntaxKind.JsxElement),
+    ...body.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement),
+    ...body.getDescendantsOfKind(SyntaxKind.JsxFragment),
+  ];
+
+  return allJsx.filter((node) => {
+    let parent = node.getParent();
+
+    while (parent && parent !== body) {
+      const pk = parent.getKind();
+
+      if (
+        pk === SyntaxKind.JsxElement ||
+        pk === SyntaxKind.JsxSelfClosingElement ||
+        pk === SyntaxKind.JsxFragment
+      ) {
+        return false;
+      }
+
+      parent = parent.getParent();
+    }
+
+    return true;
+  });
+}
+
+/** Finds dynamic expressions in a JSX tree and returns slot info for each. */
+function extractDynamicSlots(jsxNode: Node, startIndex: number): SlotInfo[] {
+  const slots: SlotInfo[] = [];
+  let index = startIndex;
+
+  for (const jsxExpr of jsxNode.getDescendantsOfKind(SyntaxKind.JsxExpression)) {
+    const inner = jsxExpr.getExpression();
+
+    if (!inner || isStaticExpression(inner)) continue;
+
+    slots.push({
+      originalText: inner.getText(),
+      marker: `__SLOT_${index}__`,
+      pos: inner.getStart(),
+      end: inner.getEnd(),
+    });
+
+    index++;
+  }
+
+  for (const spread of jsxNode.getDescendantsOfKind(SyntaxKind.JsxSpreadAttribute)) {
+    const expr = spread.getExpression();
+
+    if (!Node.isObjectLiteralExpression(expr)) continue;
+
+    for (const prop of expr.getProperties()) {
+      if (!Node.isPropertyAssignment(prop)) continue;
+
+      const init = prop.getInitializer();
+
+      if (!init || isStaticExpression(init)) continue;
+
+      slots.push({
+        originalText: init.getText(),
+        marker: `__SLOT_${index}__`,
+        pos: init.getStart(),
+        end: init.getEnd(),
+      });
+
+      index++;
+    }
+  }
+
+  return slots;
+}
+
+/** Produces JSX text with dynamic expressions replaced by slot markers (right-to-left). */
+function buildMarkedJsxText(jsxNode: Node, slots: SlotInfo[]): string {
+  let text = jsxNode.getText();
+  const jsxStart = jsxNode.getStart();
+  const sorted = [...slots].sort((a, b) => b.pos - a.pos);
+
+  for (const slot of sorted) {
+    const relStart = slot.pos - jsxStart;
+    const relEnd = slot.end - jsxStart;
+
+    text = text.substring(0, relStart) + `"${slot.marker}"` + text.substring(relEnd);
+  }
+
+  return text;
 }
 
 /**
@@ -295,13 +480,14 @@ async function evaluateTsxModule(tsxPath: string) {
   const source = project.addSourceFileAtPath(tsxPath);
 
   // 1. Auto-detect template declarations by JSX content
-  const templateFns = source.getFunctions().filter((fn) => hasJsx(fn));
+  const templateFns = source.getFunctions().filter((fn) => isPureTemplate(fn));
+  const inlineJsxFns = source.getFunctions().filter((fn) => hasJsx(fn) && !isPureTemplate(fn));
   const templateVars = source.getVariableDeclarations().filter((decl) => {
     const init = decl.getInitializer();
     return init !== undefined && hasJsx(init);
   });
 
-  // 2. Detect dependency consts (non-JSX top-level consts referenced by templates)
+  // 2. Detect dependency consts (scoped to pure template functions only)
   const templateCode = [
     ...templateFns.map((fn) => fn.getText()),
     ...templateVars.map((decl) => decl.getInitializer()!.getText()),
@@ -331,19 +517,48 @@ async function evaluateTsxModule(tsxPath: string) {
   for (const fn of templateFns) {
     const name = fn.getName()!;
     const paramNames = fn.getParameters().map((p) => p.getName());
+
     tempLines.push(fn.getText());
+
     const markerArgs = paramNames.map((p) => `"__SLOT_${p}__"`).join(", ");
+
     tempLines.push(`export const __${name} = ${name}(${markerArgs});`);
   }
 
   for (const decl of templateVars) {
     const stmt = decl.getVariableStatement()!;
     const text = stmt.getText();
+
     tempLines.push(text.startsWith("export") ? text : "export " + text);
+  }
+
+  // Collect inline JSX data and add wrappers to temp file
+  const inlineJsxData: InlineJsxFunction[] = [];
+
+  for (const fn of inlineJsxFns) {
+    const jsxNodes = collectInlineJsxNodes(fn);
+    const entries: InlineJsxEntry[] = [];
+    let slotCounter = 0;
+
+    for (const jsxNode of jsxNodes) {
+      const slots = extractDynamicSlots(jsxNode, slotCounter);
+      slotCounter += slots.length;
+      entries.push({ jsxNode, slots, html: "" });
+    }
+
+    const fnName = fn.getName()!;
+
+    for (let i = 0; i < entries.length; i++) {
+      const markedText = buildMarkedJsxText(entries[i].jsxNode, entries[i].slots);
+      tempLines.push(`export const __inline_${fnName}_${i} = ${markedText};`);
+    }
+
+    inlineJsxData.push({ fn, entries });
   }
 
   const name = basename(tsxPath, ".tsx");
   const tempPath = resolve("src/patcher", `.${name}-templates.tsx`);
+
   writeFileSync(tempPath, tempLines.join("\n"));
 
   const fnHtml: Record<string, string> = {};
@@ -364,11 +579,20 @@ async function evaluateTsxModule(tsxPath: string) {
     for (const decl of templateVars) {
       varHtml[decl.getName()] = await minifyHtml(mod[decl.getName()]);
     }
+
+    // 6. Evaluate and minify inline JSX
+    for (const { fn, entries } of inlineJsxData) {
+      const fnName = fn.getName()!;
+
+      for (let i = 0; i < entries.length; i++) {
+        entries[i].html = await minifyHtml(mod[`__inline_${fnName}_${i}`]);
+      }
+    }
   } finally {
     unlinkSync(tempPath);
   }
 
-  return { tsxPath, source, templateFns, templateVars, depStmts, fnHtml, varHtml };
+  return { tsxPath, source, templateFns, templateVars, depStmts, fnHtml, varHtml, inlineJsxData };
 }
 
 /**
@@ -381,7 +605,8 @@ function generateTsModule(
   evaluated: Awaited<ReturnType<typeof evaluateTsxModule>>,
   map: ShorteningMap,
 ) {
-  const { tsxPath, source, templateFns, templateVars, depStmts, fnHtml, varHtml } = evaluated;
+  const { tsxPath, source, templateFns, templateVars, depStmts, fnHtml, varHtml, inlineJsxData } =
+    evaluated;
 
   // 1. Apply shortening + compile function templates
   for (const fn of templateFns) {
@@ -390,6 +615,7 @@ function generateTsModule(
     const { segments, slotNames } = splitFragment(fnName, html);
 
     let expr = JSON.stringify(segments[0]);
+
     for (let i = 0; i < slotNames.length; i++) {
       expr += ` + ${slotNames[i]} + ${JSON.stringify(segments[i + 1])}`;
     }
@@ -403,7 +629,30 @@ function generateTsModule(
     decl.setInitializer(JSON.stringify(html));
   }
 
-  // 3. Remove dependency-only variable statements (consumed at build time)
+  // 3. Compile inline JSX expressions (reverse source order to preserve positions)
+  for (const { fn, entries } of inlineJsxData) {
+    const fnName = fn.getName() || "anonymous";
+    const reversedEntries = [...entries].sort(
+      (a, b) => b.jsxNode.getStart() - a.jsxNode.getStart(),
+    );
+
+    for (const entry of reversedEntries) {
+      const html = applyShorteningMap(entry.html, map);
+      const { segments, slotNames } = splitFragment(`inline_${fnName}`, html);
+
+      const slotLookup = new Map(entry.slots.map((s) => [s.marker.slice(7, -2), s.originalText]));
+
+      let expr = JSON.stringify(segments[0]);
+
+      for (let i = 0; i < slotNames.length; i++) {
+        expr += ` + ${slotLookup.get(slotNames[i])} + ${JSON.stringify(segments[i + 1])}`;
+      }
+
+      entry.jsxNode.replaceWithText(`(${expr})`);
+    }
+  }
+
+  // 4. Remove dependency-only variable statements (consumed at build time)
   for (const stmt of depStmts) {
     stmt.remove();
   }
@@ -437,10 +686,15 @@ async function compileTsxModules() {
     evaluated.push(await evaluateTsxModule(tsxPath));
   }
 
-  // Build shortening map from all combined HTML
+  // Build shortening map from all combined HTML (including inline JSX)
   const allHtml = evaluated
-    .flatMap((e) => [...Object.values(e.fnHtml), ...Object.values(e.varHtml)])
+    .flatMap((e) => [
+      ...Object.values(e.fnHtml),
+      ...Object.values(e.varHtml),
+      ...e.inlineJsxData.flatMap((d) => d.entries.map((entry) => entry.html)),
+    ])
     .join("");
+
   const map = buildShorteningMap(allHtml);
 
   // Phase B: apply shortening map and generate .ts files
@@ -478,6 +732,7 @@ async function build() {
   const comments = getConstantComments();
 
   generateConstantDeclarations(comments);
+
   await compileTsxModules();
 
   // Step 2: Patcher bundle
@@ -545,6 +800,7 @@ if (WATCH) {
       !GENERATED_FILES.some((f: string) => filename.endsWith(f))
     ) {
       console.log(`\nChanged: ${filename}`);
+
       build();
     }
   });

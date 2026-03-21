@@ -5,8 +5,8 @@
     "": {
       "name": "slua-derez-patcher",
       "devDependencies": {
-        "@gwigz/slua-tstl-plugin": "^0.3.0",
-        "@gwigz/slua-types": "^0.3.0",
+        "@gwigz/slua-tstl-plugin": "^1.0.0",
+        "@gwigz/slua-types": "^1.0.0",
         "@types/bun": "latest",
         "@types/node": "^25.5.0",
         "@typescript-to-lua/language-extensions": "^1.19.0",
@@ -24,9 +24,9 @@
     },
   },
   "packages": {
-    "@gwigz/slua-tstl-plugin": ["@gwigz/slua-tstl-plugin@0.3.0", "", { "dependencies": { "typescript-to-lua": "^1.33.0" }, "peerDependencies": { "typescript": "~5.9.3" } }, "sha512-dKuGLjY9ZfQoD7Hvb+wT8GB2Ouu3oVlhcN2pfeKr4Gjxa9o6lR+aSupwQMmwMFdzr9KoCwU99/4rvmtAy05a1Q=="],
+    "@gwigz/slua-tstl-plugin": ["@gwigz/slua-tstl-plugin@1.0.0", "", { "dependencies": { "typescript-to-lua": "^1.33.0" }, "peerDependencies": { "@gwigz/slua-types": "^1.0.0", "typescript": "~5.9.3" } }, "sha512-GY6bZj9H97M+OA87eaHO5cEhLMJwRipjaGyS4qrccrMWVFgWkk0xzEMUbmj8yu7ywDWfhEy2shce5OX9pYt1og=="],
 
-    "@gwigz/slua-types": ["@gwigz/slua-types@0.3.0", "", { "peerDependencies": { "@typescript-to-lua/language-extensions": "^1.0.0" } }, "sha512-OcTZ6T+0Eu5KHm8s/Vqe994B2N6jJOU2EmKdW8GMeLDkKHsHVZ87ZCBdLxdfp8lP5EoEewFwdTcTu4vff+gMoQ=="],
+    "@gwigz/slua-types": ["@gwigz/slua-types@1.0.0", "", { "peerDependencies": { "@typescript-to-lua/language-extensions": "^1.0.0" } }, "sha512-r7j0RPyzddx7sQiuYvmfk8yOhO8mUdQAYQO6whWR6CooYs+6So6uU+sA3APmD8OrIOLI96h7cm9a9gq3t2Vdtg=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 

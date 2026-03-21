@@ -14,7 +14,7 @@ interface AlpineElement {
 
 /** Patcher Alpine.js component: state, computed properties, and methods. */
 interface PatcherComponent {
-  $el: AlpineElement;
+  $root: AlpineElement;
   items: string[];
   allChecked: boolean;
   toggleAll(): void;
@@ -29,9 +29,9 @@ const patcherData = function () {
     items: [] as string[],
     allChecked: false,
     toggleAll(this: PatcherComponent) {
-      const boxes = [...this.$el.querySelectorAll("input[name=item]")];
-      const objBoxes = [...this.$el.querySelectorAll(".obj-header input[type=checkbox]")];
-      const details = [...this.$el.querySelectorAll("details")];
+      const boxes = [...this.$root.querySelectorAll("input[name=item]")];
+      const objBoxes = [...this.$root.querySelectorAll(".obj-header input[type=checkbox]")];
+      const details = [...this.$root.querySelectorAll("details")];
 
       if (this.allChecked) {
         this.items = [];
@@ -52,35 +52,35 @@ const patcherData = function () {
       this.allChecked = !this.allChecked;
     },
     toggleObject(this: PatcherComponent, objName: string) {
-      const boxes = [...this.$el.querySelectorAll("input[name=item]")].filter((b) =>
-        b.value.startsWith(objName + "/"),
+      const group = [...this.$root.querySelectorAll(".obj-group")].find(
+        (g) => g.querySelector(".obj-name").textContent === objName,
       );
 
+      if (!group) return;
+
+      const boxes = [...group.querySelectorAll("input[name=item]")];
       const allChecked = boxes.every((b) => b.checked);
 
       boxes.forEach((b) => (b.checked = !allChecked));
-
-      if (boxes.length > 0) {
-        boxes[0].closest("details").open = true;
-      }
+      group.open = true;
 
       this.sync();
     },
     updateObjBoxes(this: PatcherComponent) {
-      this.$el.querySelectorAll(".obj-header input[type=checkbox]").forEach((b) => {
-        const name = b.closest(".obj-group").querySelector(".obj-name").textContent;
-        const prefix = name + "/";
-        const selected = this.items.filter((i) => i.startsWith(prefix)).length;
-        const total = this.$el.querySelectorAll('input[name=item][value^="' + prefix + '"]').length;
+      this.$root.querySelectorAll(".obj-header input[type=checkbox]").forEach((b) => {
+        const group = b.closest(".obj-group");
+        const boxes = [...group.querySelectorAll("input[name=item]")];
+        const selected = boxes.filter((c) => c.checked).length;
+        const total = boxes.length;
 
         b.checked = total > 0 && selected === total;
         b.indeterminate = selected > 0 && selected < total;
       });
     },
     sync(this: PatcherComponent) {
-      this.items = [...this.$el.querySelectorAll("input[name=item]:checked")].map((b) => b.value);
+      this.items = [...this.$root.querySelectorAll("input[name=item]:checked")].map((b) => b.value);
 
-      const allBoxes = this.$el.querySelectorAll("input[name=item]");
+      const allBoxes = this.$root.querySelectorAll("input[name=item]");
 
       this.allChecked = this.items.length > 0 && this.items.length === allBoxes.length;
       this.updateObjBoxes();
@@ -88,119 +88,82 @@ const patcherData = function () {
   };
 };
 
-export function pageShell(baseUrl: string) {
+export function pageShell(baseUrl: string, objectName: string) {
   return (
     <html xmlns="http://www.w3.org/1999/xhtml" lang="en" data-theme="dark">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <base href={baseUrl + "/"} />
-        <title>Patcher</title>
+        <title>{objectName}</title>
         <link
           rel="icon"
           href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text y='1em'>📝</text></svg>"
         />
-        <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+        <link
+          rel="stylesheet"
+          href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css"
+        />
         <script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
         <script>
           {`/*<![CDATA[*/document.addEventListener('alpine:init',()=>{Alpine.data('patcher',${patcherData.toString()})})/*]]>*/`}
         </script>
-        <script defer src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
         <script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script>
         <style>
           {`
             b { font-weight: inherit; }
-            body > main {
-              max-width: 580px;
-              margin: 0 auto;
-              padding: 1.5rem 1rem;
-            }
+            body { max-width: 580px; padding: 1.5rem 1rem; }
+            input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+            h2 { margin: 0 0 1rem; }
 
-            .app-header {
-              font-size: 1.25rem;
-              margin: 0 0 1rem;
-              padding-bottom: 0.75rem;
-              border-bottom: 1px solid var(--pico-muted-border-color);
-              letter-spacing: -0.02em;
-            }
-
-            /* Toolbar */
-            .toolbar {
+            .toolbar, .obj-header, .panel-body, .item-row {
               display: flex;
-              gap: 0.5rem;
               align-items: center;
-              flex-wrap: wrap;
-              margin-bottom: 0.75rem;
+              gap: 0.5rem;
             }
-            .toolbar label {
-              font-size: 0.8rem;
-              color: var(--pico-muted-color);
+            .toolbar label, .panel-body label {
               display: flex;
               align-items: center;
               gap: 0.4rem;
               margin: 0;
               cursor: pointer;
+              color: var(--muted-foreground);
             }
-            .toolbar label input[type="checkbox"] { margin: 0; }
-            .toolbar-spacer { flex: 1; }
+            .toolbar label { font-size: 0.8rem; }
+            .toolbar {
+              flex-wrap: wrap;
+              margin-bottom: 0.75rem;
+            }
             .toolbar button, .toolbar [type="submit"] {
-              width: auto;
               font-size: 0.75rem;
-              font-weight: 500;
               padding: 0.4rem 0.75rem;
               margin: 0;
               white-space: nowrap;
             }
             .toolbar svg { width: 14px; height: 14px; vertical-align: -2px; }
 
-            /* Object list */
-            .obj-list {
-              display: flex;
-              flex-direction: column;
-              gap: 1px;
-              background: var(--pico-muted-border-color);
-              border: 1px solid var(--pico-muted-border-color);
-              border-radius: var(--pico-border-radius);
-              overflow: hidden;
-              margin-bottom: 1rem;
-            }
-            .obj-group { background: var(--pico-card-background-color); }
-
-            /* Summary/details reset */
-            details { margin: 0; }
-            details summary { list-style: none !important; padding: 0; }
-            details summary::after { display: none !important; }
-            details summary::-webkit-details-marker { display: none !important; }
-            details summary::marker { display: none !important; content: none !important; }
-            details[open] > summary { margin-bottom: 0 !important; }
+            .obj-list { margin-bottom: 1rem; }
+            .obj-group { background: var(--card); }
+            details { padding: 0; overflow: hidden; }
+            summary { list-style: none; }
+            summary::marker { display: none; content: none; }
+            summary::-webkit-details-marker { display: none; }
 
             .obj-header {
-              display: flex;
-              align-items: center;
-              gap: 0.5rem;
               padding: 0.6rem 0.75rem;
-              cursor: pointer;
               user-select: none;
             }
-            .obj-header:hover { background: var(--pico-card-sectioning-background-color); }
-            .obj-header input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+            .obj-header:hover { background: var(--accent); }
             .truncate {
               min-width: 0;
               overflow: hidden;
               text-overflow: ellipsis;
               white-space: nowrap;
             }
-            .obj-name { font-size: 0.85rem; font-weight: 600; flex: 1; }
-            .obj-badge {
-              font-size: 0.65rem;
-              color: var(--pico-muted-color);
-              background: var(--pico-card-sectioning-background-color);
-              padding: 0.1rem 0.4rem;
-              border-radius: 3px;
-              flex-shrink: 0;
-            }
+            .obj-name, .item-name { flex: 1; }
+            .obj-name { font-size: 0.85rem; font-weight: 600; }
             .obj-toggle {
-              color: var(--pico-muted-color);
+              color: var(--muted-foreground);
               font-size: 0.7rem;
               flex-shrink: 0;
               width: 1rem;
@@ -209,97 +172,61 @@ export function pageShell(baseUrl: string) {
             }
             details[open] > summary .obj-toggle { transform: rotate(90deg); }
 
-            /* Item rows */
+            kbd {
+              font-size: 0.65rem;
+              font-weight: 600;
+              text-transform: uppercase;
+            }
+
             .obj-items {
-              border-top: 1px solid var(--pico-muted-border-color);
-              background: var(--pico-card-sectioning-background-color);
+              border-top: var(--border);
+              background: var(--secondary);
             }
             .item-row {
-              display: flex;
-              align-items: center;
-              gap: 0.5rem;
               padding: 0.35rem 0.75rem 0.35rem 2.25rem;
               font-size: 0.78rem;
-              color: var(--pico-muted-color);
-              border-bottom: 1px solid var(--pico-muted-border-color);
+              border-bottom: var(--border);
             }
             .item-row:last-child { border-bottom: none; }
-            .item-row input[type="checkbox"] { margin: 0; flex-shrink: 0; }
-            .item-row .item-name { flex: 1; }
-            .item-type {
-              font-size: 0.65rem;
-              text-transform: uppercase;
-              letter-spacing: 0.04em;
-              flex-shrink: 0;
-              padding: 0.05rem 0.3rem;
-              border-radius: 3px;
-            }
-            .item-type-script { color: var(--pico-primary); background: var(--pico-primary-focus); }
-            .item-type-item { color: var(--pico-muted-color); background: var(--pico-card-sectioning-background-color); }
 
-            .empty-state { text-align: center; padding: 2rem 1rem; color: var(--pico-muted-color); }
+            .empty-state { text-align: center; padding: 2rem 1rem; color: var(--muted-foreground); }
 
-            /* Status */
-            #status { font-size: 0.8rem; }
-            #status progress { margin-top: 0.5rem; }
-            .status-header { display: flex; align-items: center; gap: 0.5rem; }
-            .status-dot {
-              width: 8px;
-              height: 8px;
-              border-radius: 50%;
-              flex-shrink: 0;
-            }
-            .status-dot-ready { background: var(--pico-primary); }
-            .status-dot-busy {
-              background: #d29922;
-              animation: pulse 1.5s ease-in-out infinite;
-            }
-            @keyframes pulse {
-              0%, 100% { opacity: 1; }
-              50% { opacity: 0.4; }
-            }
-            .status-log {
+            #status { font-size: 0.8rem; flex-direction: column; align-items: stretch; }
+            #status > b { font-weight: 600; }
+.status-log {
               margin-top: 0.5rem;
               max-height: 160px;
               overflow-y: auto;
             }
-            .status-log p { margin: 0.1rem 0; color: var(--pico-muted-color); font-size: 0.75rem; }
-            .status-log p:last-child { color: var(--pico-color); }
-            .status-pct { font-size: 0.75rem; color: var(--pico-muted-color); margin-left: auto; }
+            .status-log p {
+              margin: 0;
+              padding: 0.1rem 0;
+              color: var(--muted-foreground);
+              font-size: 0.7rem;
+              font-family: ui-monospace, monospace;
+              line-height: 1.3;
+            }
+            .status-log p:last-child { color: var(--foreground); }
 
-            /* Auto-update */
-            .autoupdate-panel {
+            .panel {
               margin-bottom: 0.75rem;
-              background: var(--pico-card-background-color);
-              border: 1px solid var(--pico-muted-border-color);
-              border-radius: var(--pico-border-radius);
+              background: var(--card);
+              padding: 0;
               overflow: hidden;
             }
-            .autoupdate-header {
+            .panel-header {
               font-size: 0.7rem;
               font-weight: 600;
               text-transform: uppercase;
               letter-spacing: 0.05em;
-              color: var(--pico-muted-color);
+              color: var(--muted-foreground);
               padding: 0.4rem 0.75rem;
-              border-bottom: 1px solid var(--pico-muted-border-color);
+              border-bottom: var(--border);
             }
-            .autoupdate-bar {
-              display: flex;
-              align-items: center;
-              gap: 0.5rem;
+            .panel-body {
               font-size: 0.8rem;
               padding: 0.5rem 0.75rem;
             }
-            .autoupdate-bar label {
-              display: flex;
-              align-items: center;
-              gap: 0.4rem;
-              margin: 0;
-              cursor: pointer;
-              color: var(--pico-muted-color);
-            }
-            .autoupdate-bar label input[type="checkbox"] { margin: 0; }
             .debounce-label {
               margin-left: auto !important;
             }
@@ -309,68 +236,76 @@ export function pageShell(baseUrl: string) {
               padding: 0.2rem 0.4rem;
               margin: 0;
               text-align: center;
+              border: var(--border);
+              border-radius: var(--radius);
+              background: var(--background);
+              color: var(--foreground);
             }
           `}
         </style>
       </head>
       <body>
         <main hx-get="app" hx-trigger="load">
-          <p aria-busy="true">Loading</p>
+          <article aria-busy="spinner" style="text-align: center;"></article>
         </main>
-        <script>{"document.addEventListener('htmx:load', () => lucide.createIcons())"}</script>
+        <script>{`/*<![CDATA[*/document.addEventListener('htmx:load',(e)=>{lucide.createIcons();if(window.Alpine)Alpine.initTree(e.target)})/*]]>*/`}</script>
+        <script defer src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
       </body>
     </html>
   );
 }
 
-export const APP_FRAGMENT = (
-  <Fragment>
-    <h1 class="app-header">Patcher</h1>
+export function appFragment(objectName: string) {
+  return (
+    <Fragment>
+      <h2>{objectName}</h2>
+      <hr />
 
-    <form x-data="patcher">
-      <div class="toolbar">
-        <label>
-          <input
-            type="checkbox"
-            {...{ "x-bind:checked": "allChecked", "x-on:change": "toggleAll()" }}
-          />{" "}
-          All
-        </label>
-        <b class="toolbar-spacer"></b>
-        <button
-          type="submit"
-          hx-post="patch"
-          hx-target="#status"
-          x-show="items.length"
-          {...{ "x-bind:disabled": "items.length === 0" }}
+      <form x-data="patcher">
+        <div class="toolbar">
+          <label>
+            <input
+              type="checkbox"
+              {...{ "x-bind:checked": "allChecked", "x-on:click": "toggleAll()" }}
+            />{" "}
+            All
+          </label>
+          <b style="flex:1"></b>
+          <button
+            type="submit"
+            hx-post="patch"
+            hx-target="#status"
+            x-show="items.length"
+            {...{ "x-bind:disabled": "items.length === 0" }}
+          >
+            <i data-lucide="play"></i> Patch
+          </button>
+          <button type="button" hx-post="patch-all" hx-target="#status">
+            <i data-lucide="layers"></i> Patch All
+          </button>
+          <button type="button" class="secondary" hx-get="objects" hx-target="#objects">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+        </div>
+
+        <div
+          id="objects"
+          hx-get="objects"
+          hx-trigger="load"
+          {...{ "x-on:change": "sync()", "x-on:htmx:after-swap.camel": "sync()" }}
         >
-          <i data-lucide="play"></i> Patch
-        </button>
-        <button type="button" hx-post="patch-all" hx-target="#status">
-          <i data-lucide="layers"></i> Patch All
-        </button>
-        <button type="button" class="secondary" hx-get="objects" hx-target="#objects">
-          <i data-lucide="refresh-cw"></i>
-        </button>
-      </div>
+          <article aria-busy="spinner" style="text-align: center;"></article>
+        </div>
+      </form>
 
-      <div
-        id="objects"
-        hx-get="objects"
-        hx-trigger="load"
-        {...{ "x-on:change": "sync()", "x-on:htmx:after-swap.camel": "sync()" }}
-      >
-        <p aria-busy="true">Scanning inventory</p>
-      </div>
-    </form>
+      <div id="autoupdate" hx-get="autoupdate" hx-trigger="load" />
 
-    <div id="autoupdate" hx-get="autoupdate" hx-trigger="load" />
-
-    <article id="status">
-      <div class="status-header">
-        <b class="status-dot status-dot-ready"></b>
-        <b>Ready</b>
-      </div>
-    </article>
-  </Fragment>
-);
+      <article class="panel">
+        <div class="panel-header">Status</div>
+        <div id="status" class="panel-body">
+          Ready
+        </div>
+      </article>
+    </Fragment>
+  );
+}
