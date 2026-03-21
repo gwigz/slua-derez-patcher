@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/TypeScriptToLua/TypeScriptToLua/master/tsconfig-schema.json",
+  "include": ["src/bootstrap.ts", "src/types/globals.d.ts"],
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "strict": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"]
+  }
+}

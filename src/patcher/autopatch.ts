@@ -99,9 +99,7 @@ export function onInventoryChanged() {
     if (affected.length === 0) return;
 
     if (triggerPatch && pushMsg) {
-      pushMsg(
-        `Auto-update: ${changed.length} item(s) changed, patching ${affected.length} object(s)...`,
-      );
+      pushMsg(`Auto-update: ${changed.length} item(s) changed, patching ${affected.length} object(s)...`);
 
       triggerPatch(affected);
     }

@@ -1,10 +1,10 @@
 --[[
-SLua Derez Patcher — bulk inventory updater for Second Life objects.
+SLua Derez Patcher — bulk inventory updater for Second Life objects
 
 Place this script inside a prim alongside the objects you want to patch.
 Each object must contain a copy of the bootstrap script (bootstrap.slua).
 Scripts and items in the prim's inventory are matched to objects by naming
-convention — see inventory.ts for details.
+convention, see inventory.ts for details.
 
 On startup, an HTTP-in URL is requested and printed to owner chat. Open
 it in a browser to access the web UI, or use chat commands on channel 7:
@@ -33,785 +33,811 @@ local PIN = 87654321
 
 --[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 
-local ____modules = {}
-local ____moduleCache = {}
-local ____originalRequire = require
-local function require(file, ...)
-    if ____moduleCache[file] then
-        return ____moduleCache[file].value
-    end
-    if ____modules[file] then
-        local module = ____modules[file]
-        local value = nil
-        if (select("#", ...) > 0) then value = module(...) else value = module(file) end
-        ____moduleCache[file] = { value = value }
-        return value
-    else
-        if ____originalRequire then
-            return ____originalRequire(file)
-        else
-            error("module '" .. file .. "' not found")
-        end
-    end
-end
-____modules = {
-["bootstrap"] = function(...) 
-local ____exports = {}
---- Active listen handle, or 0 when not listening.
-local listenHandle = 0
-ll.SetRemoteScriptAccessPin(PIN)
-LLEvents:on(
-    "on_rez",
-    function(startParam)
-        if startParam == PIN then
-            if listenHandle ~= 0 then
-                ll.ListenRemove(listenHandle)
-            end
-            listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
-            ll.RegionSay(COMM_CHANNEL, "pinned")
-        end
-    end
-)
-LLEvents:on(
-    "listen",
-    function(channel, name, id, message)
-        if channel == COMM_CHANNEL and message == "done" then
-            ll.RegionSayTo(id, COMM_CHANNEL, "ready")
-            if listenHandle ~= 0 then
-                ll.ListenRemove(listenHandle)
-                listenHandle = 0
-            end
-        end
-    end
-)
-return ____exports
- end,
-["constants"] = function(...) 
-local ____exports = {}
---- Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`.
-____exports.PIN = 87654321
---- Internal channel for patcher/bootstrap protocol messages.
-____exports.COMM_CHANNEL = -47123
---- Owner chat channel for commands (patcher only).
-____exports.CMD_CHANNEL = 7
-return ____exports
- end,
-["patcher.inventory"] = function(...) 
-local ____exports = {}
 --- Matches an object name against a wildcard pattern.
--- 
+--
 -- Supported patterns:
 --   `"*"`        Matches everything
 --   `"prefix*"`  Matches names starting with prefix
 --   `"*suffix"`  Matches names ending with suffix
 --   `"exact"`    Matches the exact name (no wildcard)
-function ____exports.wildcardMatches(self, objectName, pattern)
-    if pattern == "*" then
-        return true
-    end
-    local starIdx = (string.find(pattern, "*", 1, true) or 0) - 1
-    if starIdx < 0 then
-        return objectName == pattern
-    end
-    if starIdx == 0 then
-        local suffix = string.sub(pattern, 2)
-        return #objectName >= #suffix and string.sub(objectName, #objectName - #suffix + 1) == suffix
-    end
-    return string.find(
-        objectName,
-        string.sub(pattern, 1, starIdx),
-        1,
-        true
-    ) == 1
+local function wildcardMatches(objectName, pattern)
+  if pattern == "*" then
+    return true
+  end
+
+  local starIdx = (string.find(pattern, "*", 1, true) or 0) - 1
+
+  if starIdx < 0 then
+    return objectName == pattern
+  end
+
+  if starIdx == 0 then
+    local suffix = string.sub(pattern, 2)
+
+    return #objectName >= #suffix and string.sub(objectName, #objectName - #suffix + 1) == suffix
+  end
+
+  return string.find(objectName, string.sub(pattern, 1, starIdx), 1, true) == 1
 end
+
 --- Matches an object name against one or more comma-separated wildcard
 -- patterns. Returns true if any pattern matches.
-function ____exports.patternMatches(self, objectName, pattern)
-    if string.find(pattern, ",", 1, true) ~= nil then
-        for ____, part in ipairs(string.split(pattern, ",")) do
-            if ____exports.wildcardMatches(nil, objectName, part) then
-                return true
-            end
-        end
-        return false
+local function patternMatches(objectName, pattern)
+  if string.find(pattern, ",", 1, true) ~= nil then
+    for ____, part in ipairs(string.split(pattern, ",")) do
+      if wildcardMatches(objectName, part) then
+        return true
+      end
     end
-    return ____exports.wildcardMatches(nil, objectName, pattern)
+
+    return false
+  end
+
+  return wildcardMatches(objectName, pattern)
 end
+
 --- Checks whether an inventory item targets the given object.
--- 
+--
 -- Items use a naming convention with a `/` separator:
 --   `"ObjectName/script"`    Exact match on object name
 --   `"{pattern}/script"`     Wildcard or comma pattern match
--- 
+--
 -- Returns false for items without a `/` separator.
-function ____exports.matchesObject(self, name, objectName)
-    local slashIdx = (string.find(name, "/", 1, true) or 0) - 1
-    if slashIdx < 0 then
-        return false
-    end
-    local prefix = string.sub(name, 1, slashIdx)
-    if prefix == objectName then
-        return true
-    end
-    if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
-        return ____exports.patternMatches(
-            nil,
-            objectName,
-            string.sub(prefix, 2, #prefix - 1)
-        )
-    end
+local function matchesObject(name, objectName)
+  local slashIdx = (string.find(name, "/", 1, true) or 0) - 1
+
+  if slashIdx < 0 then
     return false
+  end
+
+  local prefix = string.sub(name, 1, slashIdx)
+
+  if prefix == objectName then
+    return true
+  end
+
+  if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
+    return patternMatches(objectName, string.sub(prefix, 2, #prefix - 1))
+  end
+
+  return false
 end
+
 --- Returns the names of all object-type items in the prim's inventory.
-function ____exports.getObjectNames(self)
-    local names = {}
-    local count = ll.GetInventoryNumber(INVENTORY_OBJECT)
-    do
-        local i = 0
-        while i < count do
-            names[#names + 1] = ll.GetInventoryName(INVENTORY_OBJECT, i + 1)
-            i = i + 1
-        end
+local function getObjectNames()
+  local names = {}
+  local count = ll.GetInventoryNumber(INVENTORY_OBJECT)
+
+  do
+    local i = 0
+
+    while i < count do
+      names[#names + 1] = ll.GetInventoryName(INVENTORY_OBJECT, i + 1)
+      i = i + 1
     end
-    return names
+  end
+
+  return names
 end
+
 --- Collects all inventory items targeting the given object, separated into
 -- scripts and non-script items. Excludes the patcher script itself and
 -- any object-type inventory entries.
-function ____exports.getItemsForObject(self, selfName, objectName)
-    local scripts = {}
-    local items = {}
-    local count = ll.GetInventoryNumber(INVENTORY_ALL)
-    do
-        local i = 0
-        while i < count do
-            local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
-            local itemType = ll.GetInventoryType(name)
-            if name ~= selfName and itemType ~= INVENTORY_OBJECT then
-                if ____exports.matchesObject(nil, name, objectName) then
-                    if itemType == INVENTORY_SCRIPT then
-                        scripts[#scripts + 1] = name
-                    else
-                        items[#items + 1] = name
-                    end
-                end
-            end
-            i = i + 1
+local function getItemsForObject(selfName, objectName)
+  local scripts = {}
+  local items = {}
+  local count = ll.GetInventoryNumber(INVENTORY_ALL)
+
+  do
+    local i = 0
+
+    while i < count do
+      local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
+      local itemType = ll.GetInventoryType(name)
+
+      if name ~= selfName and itemType ~= INVENTORY_OBJECT then
+        if matchesObject(name, objectName) then
+          if itemType == INVENTORY_SCRIPT then
+            scripts[#scripts + 1] = name
+          else
+            items[#items + 1] = name
+          end
         end
+      end
+
+      i = i + 1
     end
-    return {scripts = scripts, items = items}
+  end
+
+  return { scripts = scripts, items = items }
 end
+
 --- Strips the `ObjectName/` prefix, returning just the item's own name.
-function ____exports.targetItemName(self, fullName)
-    local idx = (string.find(fullName, "/", 1, true) or 0) - 1
-    return if idx < 0 then fullName else string.sub(fullName, idx + 1 + 1)
+local function targetItemName(fullName)
+  local idx = (string.find(fullName, "/", 1, true) or 0) - 1
+
+  return if idx < 0 then fullName else string.sub(fullName, idx + 1 + 1)
 end
+
 --- Inventory type constant -> short human-readable label.
 local TYPE_LABELS = {
-    [INVENTORY_SCRIPT] = "script",
-    [INVENTORY_TEXTURE] = "texture",
-    [INVENTORY_SOUND] = "sound",
-    [INVENTORY_LANDMARK] = "landmark",
-    [INVENTORY_NOTECARD] = "notecard",
-    [INVENTORY_ANIMATION] = "animation",
-    [INVENTORY_GESTURE] = "gesture",
-    [INVENTORY_CLOTHING] = "clothing",
-    [INVENTORY_BODYPART] = "body part",
-    [INVENTORY_SETTING] = "setting",
-    [INVENTORY_MATERIAL] = "material"
+
+  [INVENTORY_SCRIPT] = "script",
+  [INVENTORY_TEXTURE] = "texture",
+  [INVENTORY_SOUND] = "sound",
+  [INVENTORY_LANDMARK] = "landmark",
+  [INVENTORY_NOTECARD] = "notecard",
+  [INVENTORY_ANIMATION] = "animation",
+  [INVENTORY_GESTURE] = "gesture",
+  [INVENTORY_CLOTHING] = "clothing",
+  [INVENTORY_BODYPART] = "body part",
+  [INVENTORY_SETTING] = "setting",
+  [INVENTORY_MATERIAL] = "material",
 }
+
 --- Returns a short human-readable label for an inventory type constant.
-function ____exports.inventoryTypeLabel(self, itemType)
-    return TYPE_LABELS[itemType] or "item"
+local function inventoryTypeLabel(itemType)
+  return TYPE_LABELS[itemType] or "item"
 end
-return ____exports
- end,
-["patcher.autopatch"] = function(...) 
-local ____exports = {}
+
 local takeSnapshot, diffSnapshot, getAffectedObjects, snapshot, selfName
-local ____inventory = require("patcher.inventory")
-local getObjectNames = ____inventory.getObjectNames
-local matchesObject = ____inventory.matchesObject
-function takeSnapshot(self)
-    local snap = {}
-    local count = ll.GetInventoryNumber(INVENTORY_ALL)
-    do
-        local i = 0
-        while i < count do
-            local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
-            if name ~= selfName and (string.find(name, "/", 1, true) or 0) - 1 >= 0 then
-                snap[name] = ll.GetInventoryKey(name)
-            end
-            i = i + 1
-        end
+
+function takeSnapshot()
+  local snap = {}
+  local count = ll.GetInventoryNumber(INVENTORY_ALL)
+
+  do
+    local i = 0
+
+    while i < count do
+      local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
+
+      if name ~= selfName and (string.find(name, "/", 1, true) or 0) - 1 >= 0 then
+        snap[name] = ll.GetInventoryKey(name)
+      end
+
+      i = i + 1
     end
-    return snap
+  end
+
+  return snap
 end
-function diffSnapshot(self)
-    local changed = {}
-    local newSnap = takeSnapshot(nil)
-    for name in pairs(newSnap) do
-        if snapshot[name] ~= newSnap[name] then
-            changed[#changed + 1] = name
-        end
+
+function diffSnapshot()
+  local changed = {}
+  local newSnap = takeSnapshot()
+
+  for name in pairs(newSnap) do
+    if snapshot[name] ~= newSnap[name] then
+      changed[#changed + 1] = name
     end
-    for name in pairs(snapshot) do
-        if newSnap[name] == nil then
-            changed[#changed + 1] = name
-        end
+  end
+
+  for name in pairs(snapshot) do
+    if newSnap[name] == nil then
+      changed[#changed + 1] = name
     end
-    snapshot = newSnap
-    return changed
+  end
+
+  snapshot = newSnap
+
+  return changed
 end
-function getAffectedObjects(self, changedItems)
-    local objects = getObjectNames(nil)
-    local affected = {}
-    for ____, obj in ipairs(objects) do
-        for ____, item in ipairs(changedItems) do
-            if matchesObject(nil, item, obj) then
-                affected[#affected + 1] = obj
-                break
-            end
-        end
+
+function getAffectedObjects(changedItems)
+  local objects = getObjectNames()
+  local affected = {}
+
+  for ____, obj in ipairs(objects) do
+    for ____, item in ipairs(changedItems) do
+      if matchesObject(item, obj) then
+        affected[#affected + 1] = obj
+        break
+      end
     end
-    return affected
+  end
+
+  return affected
 end
+
 local enabled = false
 local debounceSeconds = 5
+
 snapshot = {}
+
 local debounceTimer = nil
 local pendingQueue = {}
+
 --- Callback set by index.ts to trigger a patch run.
 local triggerPatch = nil
+
 --- Callback set by index.ts to check if a patch is in progress.
 local checkBusy = nil
+
 --- Callback set by index.ts to push status messages.
 local pushMsg = nil
+
 selfName = ""
+
 --- Cancels any running debounce timer.
-local function cancelDebounce(self)
-    if debounceTimer then
-        LLTimers:off(debounceTimer)
-        debounceTimer = nil
-    end
+local function cancelDebounce()
+  if debounceTimer then
+    LLTimers:off(debounceTimer)
+    debounceTimer = nil
+  end
 end
+
 --- Wires the autoupdate module to the patcher's state. Must be called once
 -- during initialization, before any other function.
-function ____exports.setup(self, ____self, trigger, busy, status)
-    selfName = ____self
-    triggerPatch = trigger
-    checkBusy = busy
-    pushMsg = status
+local function setup(____self, trigger, busy, status)
+  selfName = ____self
+  triggerPatch = trigger
+  checkBusy = busy
+  pushMsg = status
 end
+
 --- Enables autoupdate and takes an initial inventory snapshot.
-function ____exports.enable(self)
-    cancelDebounce(nil)
-    enabled = true
-    snapshot = takeSnapshot(nil)
-    pendingQueue = {}
+local function enable()
+  cancelDebounce()
+  enabled = true
+  snapshot = takeSnapshot()
+  pendingQueue = {}
 end
+
 --- Disables autoupdate and cancels any pending debounce.
-function ____exports.disable(self)
-    enabled = false
-    cancelDebounce(nil)
-    pendingQueue = {}
+local function disable()
+  enabled = false
+  cancelDebounce()
+  pendingQueue = {}
 end
-function ____exports.isEnabled(self)
-    return enabled
+
+local function isEnabled()
+  return enabled
 end
-function ____exports.getDebounceSeconds(self)
-    return debounceSeconds
+
+local function getDebounceSeconds()
+  return debounceSeconds
 end
-function ____exports.setDebounceSeconds(self, n)
-    debounceSeconds = n
+
+local function setDebounceSeconds(n)
+  debounceSeconds = n
 end
+
 --- Called from the `changed` event handler when `CHANGED_INVENTORY` fires.
 -- Resets the debounce timer. When it fires, diffs the snapshot, matches
 -- changed items to target objects, and either triggers a patch run or
 -- merges into the pending queue if busy.
-function ____exports.onInventoryChanged(self)
-    if not enabled or checkBusy and checkBusy(nil) then
-        return
+local function onInventoryChanged()
+  if not enabled or checkBusy and checkBusy() then
+    return
+  end
+
+  cancelDebounce()
+  debounceTimer = LLTimers:once(debounceSeconds, function()
+    debounceTimer = nil
+
+    local changed = diffSnapshot()
+
+    if #changed == 0 then
+      return
     end
-    cancelDebounce(nil)
-    debounceTimer = LLTimers:once(
-        debounceSeconds,
-        function()
-            debounceTimer = nil
-            local changed = diffSnapshot(nil)
-            if #changed == 0 then
-                return
-            end
-            local affected = getAffectedObjects(nil, changed)
-            if #affected == 0 then
-                return
-            end
-            if triggerPatch and pushMsg then
-                pushMsg(
-                    nil,
-                    ((("Auto-update: " .. tostring(#changed)) .. " item(s) changed, patching ") .. tostring(#affected)) .. " object(s)..."
-                )
-                triggerPatch(nil, affected)
-            end
-        end
-    )
+
+    local affected = getAffectedObjects(changed)
+
+    if #affected == 0 then
+      return
+    end
+
+    if triggerPatch and pushMsg then
+      pushMsg(
+        ((("Auto-update: " .. tostring(#changed)) .. " item(s) changed, patching ") .. tostring(#affected))
+          .. " object(s)..."
+      )
+      triggerPatch(affected)
+    end
+  end)
 end
+
 --- Returns and clears any pending autoupdate queue. Called by index.ts
 -- when a patch run completes to check for follow-up work.
-function ____exports.flushPending(self)
-    local queue = pendingQueue
-    pendingQueue = {}
-    return queue
+local function flushPending()
+  local queue = pendingQueue
+
+  pendingQueue = {}
+
+  return queue
 end
-return ____exports
- end,
-["patcher.effects"] = function(...) 
-local ____exports = {}
+
 local WHITE = vector.one
+
 --- Shows floating text above the patcher prim.
-function ____exports.setStatus(self, text)
-    ll.SetText(text, WHITE, 1)
+local function setStatus(text)
+  ll.SetText(text, WHITE, 1)
 end
+
 --- Hides the floating text.
-function ____exports.clearStatus(self)
-    ll.SetText("", vector.zero, 0)
+local function clearStatus()
+  ll.SetText("", vector.zero, 0)
 end
+
 --- Emits a particle beam toward the target object being patched.
-function ____exports.startParticles(self, targetId)
-    ll.ParticleSystem({
-        PSYS_SRC_PATTERN,
-        PSYS_SRC_PATTERN_ANGLE_CONE_EMPTY,
-        PSYS_SRC_TARGET_KEY,
-        targetId,
-        PSYS_SRC_TEXTURE,
-        "1d8f5508-86ae-4131-9044-dbb9d06d3385",
-        PSYS_PART_START_COLOR,
-        vector.create(1, 1, 1),
-        PSYS_PART_START_ALPHA,
-        1,
-        PSYS_PART_START_SCALE,
-        vector.create(0.125, 0.125, 0),
-        PSYS_SRC_MAX_AGE,
-        0,
-        PSYS_PART_MAX_AGE,
-        3.1,
-        PSYS_SRC_BURST_RATE,
-        3.1,
-        PSYS_SRC_BURST_PART_COUNT,
-        1,
-        PSYS_PART_FLAGS,
-        bit32.bor(
-            bit32.bor(PSYS_PART_EMISSIVE_MASK, PSYS_PART_FOLLOW_SRC_MASK),
-            PSYS_PART_TARGET_LINEAR_MASK
-        )
-    })
+local function startParticles(targetId)
+  ll.ParticleSystem({
+    PSYS_SRC_PATTERN,
+    PSYS_SRC_PATTERN_ANGLE_CONE_EMPTY,
+    PSYS_SRC_TARGET_KEY,
+    targetId,
+    PSYS_SRC_TEXTURE,
+    "1d8f5508-86ae-4131-9044-dbb9d06d3385",
+    PSYS_PART_START_COLOR,
+    vector.create(1, 1, 1),
+    PSYS_PART_START_ALPHA,
+    1,
+    PSYS_PART_START_SCALE,
+    vector.create(0.125, 0.125, 0),
+    PSYS_SRC_MAX_AGE,
+    0,
+    PSYS_PART_MAX_AGE,
+    3.1,
+    PSYS_SRC_BURST_RATE,
+    3.1,
+    PSYS_SRC_BURST_PART_COUNT,
+    1,
+    PSYS_PART_FLAGS,
+
+    bit32.bor(bit32.bor(PSYS_PART_EMISSIVE_MASK, PSYS_PART_FOLLOW_SRC_MASK), PSYS_PART_TARGET_LINEAR_MASK),
+  })
 end
+
 --- Stops the particle beam.
-function ____exports.stopParticles(self)
-    ll.ParticleSystem({})
+local function stopParticles()
+  ll.ParticleSystem({})
 end
-return ____exports
- end,
-["patcher.template"] = function(...) 
-local ____exports = {}
-function ____exports.pageShell(self, baseUrl, objectName)
-    return ((("<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"en\" data-theme=\"dark\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/><base href=\"" .. baseUrl) .. "/\"/><title>") .. objectName) .. "</title><link rel=\"icon\" href=\"data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg'&gt;&lt;text y='1em'&gt;📝&lt;/text&gt;&lt;/svg&gt;\"/><link rel=\"stylesheet\" href=\"//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css\"/><script src=\"//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js\"></script><script>/*<![CDATA[*/document.addEventListener(\"alpine:init\",()=>{Alpine.data(\"patcher\",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll(\"input[name=item]\")],t=[...this.$root.querySelectorAll(\".d input[type=checkbox]\")],c=[...this.$root.querySelectorAll(\"details\")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(\".i\")].find(t=>t.querySelector(\".m\").textContent===e);if(!t)return;const c=[...t.querySelectorAll(\"input[name=item]\")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(\".d input[type=checkbox]\").forEach(e=>{const t=[...e.closest(\".i\").querySelectorAll(\"input[name=item]\")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll(\"input[name=item]:checked\")].map(e=>e.value);const e=this.$root.querySelectorAll(\"input[name=item]\");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src=\"//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js\"></script><style>b{font-weight:inherit}body{max-width:580px;padding:1.5rem 1rem}input[type=checkbox]{margin:0;flex-shrink:0}h2{margin:0 0 1rem}.k,.d,.f,.o{display:flex;align-items:center;gap:.5rem}.f label,.o label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--muted-foreground)}.o label{font-size:.8rem}.o{flex-wrap:wrap;margin-bottom:.75rem}.o [type=submit],.o button{font-size:.75rem;padding:.4rem .75rem;margin:0;white-space:nowrap}.o svg{width:14px;height:14px;vertical-align:-2px}.l{margin-bottom:1rem}.i{background:var(--card)}details{padding:0;overflow:hidden}summary{list-style:none}summary::marker{display:none;content:none}summary::-webkit-details-marker{display:none}.d{padding:.6rem .75rem;user-select:none}.d:hover{background:var(--accent)}.n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.h,.m{flex:1}.m{font-size:.85rem;font-weight:600}.e{color:var(--muted-foreground);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .e{transform:rotate(90deg)}kbd{font-size:.65rem;font-weight:600;text-transform:uppercase}.j{border-top:var(--border);background:var(--secondary)}.k{padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;border-bottom:var(--border)}.k:last-child{border-bottom:none}.c{text-align:center;padding:2rem 1rem;color:var(--muted-foreground)}#c{font-size:.8rem;flex-direction:column;align-items:stretch}#c>b{font-weight:600}.g{margin-top:.5rem;max-height:160px;overflow-y:auto}.g p{margin:0;padding:.1rem 0;color:var(--muted-foreground);font-size:.7rem;font-family:ui-monospace,monospace;line-height:1.3}.g p:last-child{color:var(--foreground)}.p{margin-bottom:.75rem;background:var(--card);padding:0;overflow:hidden}.b{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding:.4rem .75rem;border-bottom:var(--border)}.f{font-size:.8rem;padding:.5rem .75rem}.a{margin-left:auto!important}.a input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center;border:var(--border);border-radius:var(--radius);background:var(--background);color:var(--foreground)}</style></head><body><main hx-get=\"app\" hx-trigger=\"load\"><article aria-busy=\"spinner\" style=\"text-align:center\"></article></main><script>/*<![CDATA[*/document.addEventListener(\"htmx:load\",e=>{lucide.createIcons(),window.Alpine&&Alpine.initTree(e.target)})/*]]>*/</script><script defer=\"\" src=\"//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js\"></script></body></html>"
+
+local function pageShell(baseUrl, objectName)
+  return (
+    (
+      (
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" data-theme="dark"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><base href="'
+        .. baseUrl
+      ) .. '/"/><title>'
+    ) .. objectName
+  )
+    .. '</title><link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 100 100&quot;&gt;&lt;text y=&quot;.9em&quot; font-size=&quot;90&quot;&gt;🎯&lt;/text&gt;&lt;/svg&gt;"/><link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css"/><script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script><script>/*<![CDATA[*/document.addEventListener("alpine:init",()=>{Alpine.data("patcher",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll("input[name=item]")],t=[...this.$root.querySelectorAll(".d input[type=checkbox]")],c=[...this.$root.querySelectorAll("details")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(".i")].find(t=>t.querySelector(".m").textContent===e);if(!t)return;const c=[...t.querySelectorAll("input[name=item]")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(".d input[type=checkbox]").forEach(e=>{const t=[...e.closest(".i").querySelectorAll("input[name=item]")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll("input[name=item]:checked")].map(e=>e.value);const e=this.$root.querySelectorAll("input[name=item]");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script><style>b{font-weight:inherit}body{max-width:580px;padding:1.5rem 1rem}input[type=checkbox]{margin:0;flex-shrink:0}h2{margin:0 0 1rem}.k,.d,.f,.o{display:flex;align-items:center;gap:.5rem}.f label,.o label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--muted-foreground)}.o label{font-size:.8rem}.o{flex-wrap:wrap;margin-bottom:.75rem}.o [type=submit],.o button{font-size:.75rem;padding:.4rem .75rem;margin:0;white-space:nowrap}.o svg{width:14px;height:14px;vertical-align:-2px}.l{margin-bottom:1rem}.i{background:var(--card)}details{padding:0;overflow:hidden}summary{list-style:none}summary::marker{display:none;content:none}summary::-webkit-details-marker{display:none}.d{padding:.6rem .75rem;user-select:none}.d:hover{background:var(--accent)}.n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.h,.m{flex:1}.m{font-size:.85rem;font-weight:600}.e{color:var(--muted-foreground);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .e{transform:rotate(90deg)}kbd{font-size:.65rem;font-weight:600;text-transform:uppercase}.j{border-top:var(--border);background:var(--secondary)}.k{padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;border-bottom:var(--border)}.k:last-child{border-bottom:none}.c{text-align:center;padding:2rem 1rem;color:var(--muted-foreground)}#c{font-size:.8rem;flex-direction:column;align-items:stretch}#c>b{font-weight:600}.g{margin-top:.5rem;max-height:160px;overflow-y:auto}.g p{margin:0;padding:.1rem 0;color:var(--muted-foreground);font-size:.7rem;font-family:ui-monospace,monospace;line-height:1.3}.g p:last-child{color:var(--foreground)}.p{margin-bottom:.75rem;background:var(--card);padding:0;overflow:hidden}.b{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding:.4rem .75rem;border-bottom:var(--border)}.f{font-size:.8rem;padding:.5rem .75rem}.a{margin-left:auto!important}.a input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center;border:var(--border);border-radius:var(--radius);background:var(--background);color:var(--foreground)}</style></head><body><main hx-get="app" hx-trigger="load"><article aria-busy="spinner" style="text-align:center"></article></main><script>/*<![CDATA[*/document.addEventListener("htmx:load",e=>{lucide.createIcons(),window.Alpine&&Alpine.initTree(e.target)})/*]]>*/</script><script defer="" src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script></body></html>'
 end
-function ____exports.appFragment(self, objectName)
-    return ("<h2>" .. objectName) .. "</h2><hr/><form x-data=\"patcher\"><div class=\"o\"><label><input type=\"checkbox\" x-bind:checked=\"allChecked\" x-on:click=\"toggleAll()\"/> All</label><b style=\"flex:1\"></b><button type=\"submit\" hx-post=\"patch\" hx-target=\"#c\" x-show=\"items.length\" x-bind:disabled=\"items.length === 0\"><i data-lucide=\"play\"></i> Patch</button><button type=\"button\" hx-post=\"patch-all\" hx-target=\"#c\"><i data-lucide=\"layers\"></i> Patch All</button><button type=\"button\" class=\"secondary\" hx-get=\"objects\" hx-target=\"#b\"><i data-lucide=\"refresh-cw\"></i></button></div><div id=\"b\" hx-get=\"objects\" hx-trigger=\"load\" x-on:change=\"sync()\" x-on:htmx:after-swap.camel=\"sync()\"><article aria-busy=\"spinner\" style=\"text-align:center\"></article></div></form><div id=\"a\" hx-get=\"autoupdate\" hx-trigger=\"load\"></div><article class=\"p\"><div class=\"b\">Status</div><div id=\"c\" class=\"f\">Ready</div></article>"
+
+local function appFragment(objectName)
+  return ("<h2>" .. objectName)
+    .. '</h2><hr/><form x-data="patcher"><div class="o"><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b style="flex:1"></b><button type="submit" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" class="secondary" hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><div id="b" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="spinner" style="text-align:center"></article></div></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article class="p"><div class="b">Status</div><div id="c" class="f">Ready</div></article>'
 end
-return ____exports
- end,
-["patcher.ui"] = function(...) 
-local ____exports = {}
-local ____inventory = require("patcher.inventory")
-local getObjectNames = ____inventory.getObjectNames
-local getItemsForObject = ____inventory.getItemsForObject
-local patternMatches = ____inventory.patternMatches
-local targetItemName = ____inventory.targetItemName
-local inventoryTypeLabel = ____inventory.inventoryTypeLabel
-local EMPTY_STATE = "<div class=\"c\">No patchable objects found in inventory.</div>"
-local STATUS_DONE = "<b>Done</b>"
-local POLL_TRIGGER = "<div hx-get=\"poll\" hx-trigger=\"load\" hx-target=\"#c\"></div>"
-____exports.NO_ITEMS_SELECTED = "<b>No items selected</b>"
+
+local EMPTY_STATE = '<div class="c">No patchable objects found in inventory.</div>'
+
+local POLL_TRIGGER = '<div hx-get="poll" hx-trigger="load" hx-target="#c"></div>'
+local NO_ITEMS_SELECTED = "<b>No items selected</b>"
+
 --- Escapes HTML special characters to prevent XSS.
-local function escapeHtml(self, s)
-    return ll.ReplaceSubString(
-        ll.ReplaceSubString(
-            ll.ReplaceSubString(
-                ll.ReplaceSubString(s, "&", "&amp;", 0),
-                "<",
-                "&lt;",
-                0
-            ),
-            ">",
-            "&gt;",
-            0
-        ),
-        "\"",
-        "&quot;",
-        0
-    )
+local function escapeHtml(s)
+  return ll.ReplaceSubString(
+
+    ll.ReplaceSubString(ll.ReplaceSubString(ll.ReplaceSubString(s, "&", "&amp;", 0), "<", "&lt;", 0), ">", "&gt;", 0),
+    '"',
+    "&quot;",
+    0
+  )
 end
+
 --- Builds an inventory row with a type-specific badge.
-local function buildItemRow(self, fullItemName)
-    local typeLabel = inventoryTypeLabel(
-        nil,
-        ll.GetInventoryType(fullItemName)
-    )
-    local escaped = escapeHtml(nil, fullItemName)
-    local itemName = escapeHtml(
-        nil,
-        targetItemName(nil, fullItemName)
-    )
-    return ((((((("<label class=\"k\"><input type=\"checkbox\" name=\"item\" value=\"" .. escaped) .. "\" x-on:change=\"sync()\"/><b class=\"h n\" tooltip-top=\"") .. itemName) .. "\">") .. itemName) .. "</b><kbd secondary>") .. typeLabel) .. "</kbd></label>"
+local function buildItemRow(fullItemName)
+  local typeLabel = inventoryTypeLabel(ll.GetInventoryType(fullItemName))
+  local escaped = escapeHtml(fullItemName)
+  local itemName = escapeHtml(targetItemName(fullItemName))
+
+  return (
+    (
+      (
+        (
+          (
+            (
+              ('<label class="k"><input type="checkbox" name="item" value="' .. escaped)
+              .. '" x-on:change="sync()"/><b class="h n" tooltip-top="'
+            ) .. itemName
+          ) .. '">'
+        ) .. itemName
+      ) .. "</b><kbd secondary>"
+    ) .. typeLabel
+  ) .. "</kbd></label>"
 end
+
 --- Builds the object list HTML with expandable groups and per-item checkboxes.
 -- Each item checkbox has name="item" value="ObjectName/item-name".
-function ____exports.buildObjectList(self, selfName)
-    local objects = getObjectNames(nil)
-    local html = ""
-    for ____, obj in ipairs(objects) do
-        local ____getItemsForObject_result_0 = getItemsForObject(nil, selfName, obj)
-        local scripts = ____getItemsForObject_result_0.scripts
-        local items = ____getItemsForObject_result_0.items
-        if #scripts > 0 or #items > 0 then
-            local escaped = escapeHtml(nil, obj)
-            local itemsHtml = ""
-            for ____, script in ipairs(scripts) do
-                itemsHtml = itemsHtml .. buildItemRow(nil, script)
-            end
-            for ____, item in ipairs(items) do
-                itemsHtml = itemsHtml .. buildItemRow(nil, item)
-            end
-            html = html .. ((((((("<details class=\"i\"><summary><div class=\"d\"><b class=\"e\">&#9654;</b><input type=\"checkbox\" x-on:click.stop=\"" .. ("toggleObject('" .. escaped) .. "')") .. "\"/><b class=\"m n\" tooltip-top=\"") .. escaped) .. "\">") .. escaped) .. "</b></div></summary><div class=\"j\">") .. itemsHtml) .. "</div></details>"
-        end
-    end
-    if html == "" then
-        return EMPTY_STATE
-    end
-    return html
-end
---- Builds a status fragment showing current patch progress.
--- Includes an hx-get="poll" trigger to continue long polling while busy.
-function ____exports.buildStatusFragment(self, busy, index, total, log)
-    local html = ""
-    if busy then
-        html = html .. ((((((("<b>Patching " .. tostring(index)) .. "/") .. tostring(total)) .. "</b><progress value=\"") .. tostring(index)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
-    elseif total > 0 then
-        html = html .. ((("<b>Done</b><progress value=\"" .. tostring(total)) .. "\" max=\"") .. tostring(total)) .. "\"></progress>"
-    else
-        html = html .. STATUS_DONE
-    end
-    if #log > 0 then
-        local logHtml = ""
-        for ____, entry in ipairs(log) do
-            logHtml = logHtml .. ("<p>" .. escapeHtml(nil, entry)) .. "</p>"
-        end
-        html = html .. ("<div class=\"g\">" .. logHtml) .. "</div>"
-    end
-    if busy then
-        html = html .. POLL_TRIGGER
-    end
-    return html
-end
---- Decodes a single URL-encoded value (+ -> space, %XX -> char).
--- Collects parts into an array and joins once to avoid O(N²) string concat.
-local function urlDecode(self, encoded)
-    local result = (string.gsub(encoded, "+", " "))
-    local parts = {}
-    local len = #result
-    local i = 1
-    while i <= len do
-        local ch = string.sub(result, i, i)
-        if ch == "%" and i + 2 <= len then
-            local hex = string.sub(result, i + 1, i + 2)
-            local match = string.find(hex, "^%x%x$")
-            if match then
-                parts[#parts + 1] = string.char(tonumber(hex, 16))
-                i = i + 3
-            else
-                parts[#parts + 1] = ch
-                i = i + 1
-            end
-        else
-            parts[#parts + 1] = ch
-            i = i + 1
-        end
-    end
-    return table.concat(parts, "")
-end
---- Extracts the first value for a given key from a URL-encoded form body.
-function ____exports.parseFormValue(self, body, key)
-    for ____, pair in ipairs(string.split(body, "&")) do
-        local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
-        if eqIdx >= 0 and string.sub(pair, 1, eqIdx) == key then
-            return urlDecode(
-                nil,
-                string.sub(pair, eqIdx + 1 + 1)
-            )
-        end
-    end
-    return nil
-end
---- Parses URL-encoded form body to extract selected item names.
--- Body format: "item=ObjName/script.slua&item=ObjName/other.slua"
--- 
--- Returns an ordered queue of unique object names and a filter map of
--- object name -> selected full item names.
-function ____exports.parseFormItems(self, body)
-    local filter = {}
-    local queue = {}
-    local objects = getObjectNames(nil)
-    for ____, pair in ipairs(string.split(body, "&")) do
-        local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
-        if eqIdx < 0 then
-        else
-            local key = string.sub(pair, 1, eqIdx)
-            if key == "item" then
-                local fullName = urlDecode(
-                    nil,
-                    string.sub(pair, eqIdx + 1 + 1)
-                )
-                local slashIdx = (string.find(fullName, "/", 1, true) or 0) - 1
-                if slashIdx >= 0 then
-                    local prefix = string.sub(fullName, 1, slashIdx)
-                    if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
-                        local pattern = string.sub(prefix, 2, #prefix - 1)
-                        for ____, obj in ipairs(objects) do
-                            if patternMatches(nil, obj, pattern) then
-                                if filter[obj] == nil then
-                                    filter[obj] = {}
-                                    queue[#queue + 1] = obj
-                                end
-                                local ____filter_obj_1 = filter[obj]
-                                ____filter_obj_1[#____filter_obj_1 + 1] = fullName
-                            end
-                        end
-                    else
-                        if filter[prefix] == nil then
-                            filter[prefix] = {}
-                            queue[#queue + 1] = prefix
-                        end
-                        local ____filter_prefix_2 = filter[prefix]
-                        ____filter_prefix_2[#____filter_prefix_2 + 1] = fullName
-                    end
-                end
-            end
-        end
-    end
-    return {queue = queue, filter = filter}
-end
---- Builds the autoupdate controls reflecting current server state.
--- Returned for GET /autoupdate and POST /autoupdate.
-function ____exports.buildAutoUpdateControls(self, enabled, debounce)
-    if enabled then
-        return ("<article class=\"p\"><div class=\"b\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" checked=\"\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label><label class=\"a\">Delay <input type=\"number\" name=\"debounce\" value=\"" .. tostring(debounce)) .. "\" min=\"1\" max=\"60\" hx-post=\"autoupdate-debounce\" hx-target=\"#a\" hx-trigger=\"change delay:500ms\"/> s</label></div></article>"
-    end
-    return ("<article class=\"p\"><div class=\"b\">Settings</div><div class=\"f\"><label><input type=\"checkbox\" name=\"enabled\" hx-post=\"autoupdate\" hx-target=\"#a\"/> Auto-update</label><label class=\"a\">Delay <input type=\"number\" name=\"debounce\" value=\"" .. tostring(debounce)) .. "\" min=\"1\" max=\"60\" hx-post=\"autoupdate-debounce\" hx-target=\"#a\" hx-trigger=\"change delay:500ms\"/> s</label></div></article>"
-end
-return ____exports
- end,
-["patcher.index"] = function(...) 
--- Lua Library inline imports
-local function __TS__ArrayFilter(self, callbackfn, thisArg)
-    local result = {}
-    local len = 0
-    for i = 1, #self do
-        if callbackfn(thisArg, self[i], i - 1, self) then
-            len = len + 1
-            result[len] = self[i]
-        end
-    end
-    return result
-end
--- End of Lua Library inline imports
-local ____exports = {}
-local logStatus, pushStatus, statusFragment, respondPoll, patchNext, startPatching, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, busy, timeoutTimer, pendingScripts, pendingItems, scriptLoadTimer, pollRequestId, pollTimer, statusLog
-local ____inventory = require("patcher.inventory")
-local getItemsForObject = ____inventory.getItemsForObject
-local getObjectNames = ____inventory.getObjectNames
-local targetItemName = ____inventory.targetItemName
-local ____effects = require("patcher.effects")
-local setStatus = ____effects.setStatus
-local clearStatus = ____effects.clearStatus
-local startParticles = ____effects.startParticles
-local stopParticles = ____effects.stopParticles
-local ____template = require("patcher.template")
-local pageShell = ____template.pageShell
-local appFragment = ____template.appFragment
-local ____ui = require("patcher.ui")
-local buildObjectList = ____ui.buildObjectList
-local buildStatusFragment = ____ui.buildStatusFragment
-local parseFormItems = ____ui.parseFormItems
-local parseFormValue = ____ui.parseFormValue
-local buildAutoUpdateControls = ____ui.buildAutoUpdateControls
-local NO_ITEMS_SELECTED = ____ui.NO_ITEMS_SELECTED
-local ____autopatch = require("patcher.autopatch")
-local setupAutoUpdate = ____autopatch.setup
-local onInventoryChanged = ____autopatch.onInventoryChanged
-local flushPending = ____autopatch.flushPending
-local isAutoUpdateEnabled = ____autopatch.isEnabled
-local enableAutoUpdate = ____autopatch.enable
-local disableAutoUpdate = ____autopatch.disable
-local getDebounceSeconds = ____autopatch.getDebounceSeconds
-local setDebounceSeconds = ____autopatch.setDebounceSeconds
-function logStatus(self, message)
-    ll.OwnerSay(message)
-    statusLog[#statusLog + 1] = message
-    if #statusLog > 20 then
-        table.remove(statusLog, 1)
-    end
-end
-function pushStatus(self, message)
-    logStatus(nil, message)
-    if pollRequestId ~= "" then
-        respondPoll(nil)
-    end
-end
-function statusFragment(self)
-    return buildStatusFragment(
-        nil,
-        busy,
-        completedItems,
-        totalItems,
-        statusLog
-    )
-end
-function respondPoll(self)
-    if pollRequestId == "" then
-        return
-    end
-    respondHtml(
-        nil,
-        pollRequestId,
-        statusFragment(nil)
-    )
-    pollRequestId = ""
-    if pollTimer then
-        LLTimers:off(pollTimer)
-        pollTimer = nil
-    end
-end
-function patchNext(self)
-    if queueIndex >= #patchQueue then
-        busy = false
-        patchQueue = {}
-        patchItemFilter = {}
-        queueIndex = 0
-        local pending = flushPending(nil)
-        if #pending > 0 then
-            pushStatus(
-                nil,
-                ("Auto-update: patching " .. tostring(#pending)) .. " queued object(s)..."
-            )
-            startPatching(nil, pending, nil, false)
-            return
-        end
-        clearStatus(nil)
-        pushStatus(nil, "All objects patched.")
-        return
-    end
-    currentObjectName = patchQueue[queueIndex + 1]
-    queueIndex = queueIndex + 1
-    local ____getItemsForObject_result_0 = getItemsForObject(nil, SELF_NAME, currentObjectName)
+local function buildObjectList(selfName)
+  local objects = getObjectNames()
+  local html = ""
+
+  for ____, obj in ipairs(objects) do
+    local ____getItemsForObject_result_0 = getItemsForObject(selfName, obj)
     local scripts = ____getItemsForObject_result_0.scripts
     local items = ____getItemsForObject_result_0.items
-    local filter = patchItemFilter[currentObjectName]
-    if filter and #filter > 0 then
-        pendingScripts = __TS__ArrayFilter(
-            scripts,
-            function(____, s) return table.find(filter, s) ~= nil end
-        )
-        pendingItems = __TS__ArrayFilter(
-            items,
-            function(____, it) return table.find(filter, it) ~= nil end
-        )
+
+    if #scripts > 0 or #items > 0 then
+      local escaped = escapeHtml(obj)
+      local itemsHtml = ""
+
+      for ____, script in ipairs(scripts) do
+        itemsHtml = itemsHtml .. buildItemRow(script)
+      end
+
+      for ____, item in ipairs(items) do
+        itemsHtml = itemsHtml .. buildItemRow(item)
+      end
+
+      html = html
+        .. ((((((('<details class="i"><summary><div class="d"><b class="e">&#9654;</b><input type="checkbox" x-on:click.stop="' .. ("toggleObject('" .. escaped) .. "')") .. '"/><b class="m n" tooltip-top="') .. escaped) .. '">') .. escaped) .. '</b></div></summary><div class="j">') .. itemsHtml)
+        .. "</div></details>"
+    end
+  end
+
+  if html == "" then
+    return EMPTY_STATE
+  end
+
+  return html
+end
+
+--- Builds a status fragment showing current patch progress.
+-- Includes an hx-get="poll" trigger to continue long polling while busy.
+local function buildStatusFragment(busy, index, total, log)
+  local html = ""
+
+  if busy then
+    html = html
+      .. ((((((("<b>Patching " .. tostring(index)) .. "/") .. tostring(total)) .. '</b><progress value="') .. tostring(
+        index
+      )) .. '" max="') .. tostring(total))
+      .. '"></progress>'
+  elseif total > 0 then
+    html = html
+      .. ((('<b>Done</b><progress value="' .. tostring(total)) .. '" max="') .. tostring(total))
+      .. '"></progress>'
+  else
+    html = html .. "<b>Done</b>"
+  end
+
+  if #log > 0 then
+    local logHtml = ""
+
+    for ____, entry in ipairs(log) do
+      logHtml = logHtml .. ("<p>" .. escapeHtml(entry)) .. "</p>"
+    end
+
+    html = html .. ('<div class="g">' .. logHtml) .. "</div>"
+  end
+
+  if busy then
+    html = html .. POLL_TRIGGER
+  end
+
+  return html
+end
+
+--- Decodes a single URL-encoded value (+ -> space, %XX -> char).
+-- Collects parts into an array and joins once to avoid O(N²) string concat.
+local function urlDecode(encoded)
+  local result = (string.gsub(encoded, "+", " "))
+  local parts = {}
+  local len = #result
+  local i = 1
+
+  while i <= len do
+    local ch = string.sub(result, i, i)
+
+    if ch == "%" and i + 2 <= len then
+      local hex = string.sub(result, i + 1, i + 2)
+      local match = string.find(hex, "^%x%x$")
+
+      if match then
+        parts[#parts + 1] = string.char(tonumber(hex, 16))
+        i = i + 3
+      else
+        parts[#parts + 1] = ch
+        i = i + 1
+      end
     else
-        pendingScripts = scripts
-        pendingItems = items
+      parts[#parts + 1] = ch
+      i = i + 1
     end
-    if #pendingScripts == 0 and #pendingItems == 0 then
-        pushStatus(nil, ("No items found for " .. currentObjectName) .. ", skipping.")
-        patchNext(nil)
-        return
+  end
+
+  return table.concat(parts, "")
+end
+
+--- Extracts the first value for a given key from a URL-encoded form body.
+local function parseFormValue(body, key)
+  for ____, pair in ipairs(string.split(body, "&")) do
+    local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
+
+    if eqIdx >= 0 and string.sub(pair, 1, eqIdx) == key then
+      return urlDecode(string.sub(pair, eqIdx + 1 + 1))
     end
-    setStatus(
-        nil,
-        (((((((((currentObjectName .. "\n") .. tostring(#pendingScripts)) .. " script(s), ") .. tostring(#pendingItems)) .. " item(s)") .. "\n[") .. tostring(completedItems)) .. "/") .. tostring(totalItems)) .. "]"
-    )
-    pushStatus(
-        nil,
-        ((((("Rezzing " .. currentObjectName) .. "... [") .. tostring(completedItems)) .. "/") .. tostring(totalItems)) .. "]"
-    )
-    currentObjectId = ll.RezObjectWithParams(
-        currentObjectName,
-        {
-            REZ_POS,
-            vector.create(0, 0, 1),
-            1,
-            0,
-            REZ_PARAM,
-            PIN
-        }
-    )
-    local timeoutSeconds = #pendingScripts * 3.5 + 10
-    timeoutTimer = LLTimers:once(
-        timeoutSeconds,
-        function()
-            stopParticles(nil)
-            if scriptLoadTimer then
-                LLTimers:off(scriptLoadTimer)
-                scriptLoadTimer = nil
+  end
+
+  return nil
+end
+
+--- Parses URL-encoded form body to extract selected item names.
+-- Body format: "item=ObjName/script.slua&item=ObjName/other.slua"
+--
+-- Returns an ordered queue of unique object names and a filter map of
+-- object name -> selected full item names.
+local function parseFormItems(body)
+  local filter = {}
+  local queue = {}
+  local objects = getObjectNames()
+
+  for ____, pair in ipairs(string.split(body, "&")) do
+    local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
+
+    if eqIdx < 0 then
+    else
+      local key = string.sub(pair, 1, eqIdx)
+
+      if key == "item" then
+        local fullName = urlDecode(string.sub(pair, eqIdx + 1 + 1))
+        local slashIdx = (string.find(fullName, "/", 1, true) or 0) - 1
+
+        if slashIdx >= 0 then
+          local prefix = string.sub(fullName, 1, slashIdx)
+
+          if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
+            local pattern = string.sub(prefix, 2, #prefix - 1)
+
+            for ____, obj in ipairs(objects) do
+              if patternMatches(obj, pattern) then
+                if filter[obj] == nil then
+                  filter[obj] = {}
+                  queue[#queue + 1] = obj
+                end
+
+                local ____filter_obj_1 = filter[obj]
+
+                ____filter_obj_1[#____filter_obj_1 + 1] = fullName
+              end
             end
-            pushStatus(nil, ("Timeout waiting for " .. currentObjectName) .. ", derezing.")
-            ll.DerezObject(currentObjectId, DEREZ_DIE)
-            timeoutTimer = nil
-            patchNext(nil)
+          else
+            if filter[prefix] == nil then
+              filter[prefix] = {}
+              queue[#queue + 1] = prefix
+            end
+
+            local ____filter_prefix_2 = filter[prefix]
+
+            ____filter_prefix_2[#____filter_prefix_2 + 1] = fullName
+          end
         end
-    )
-end
-function startPatching(self, queue, itemFilter, resetLog)
-    if resetLog == nil then
-        resetLog = true
+      end
     end
-    patchQueue = queue
-    patchItemFilter = itemFilter or ({})
+  end
+
+  return { queue = queue, filter = filter }
+end
+
+--- Builds the autoupdate controls reflecting current server state.
+-- Returned for GET /autoupdate and POST /autoupdate.
+local function buildAutoUpdateControls(enabled, debounce)
+  if enabled then
+    return (
+      '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" checked="" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
+      .. tostring(debounce)
+    )
+      .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div></article>'
+  end
+
+  return (
+    '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
+    .. tostring(debounce)
+  )
+    .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div></article>'
+end
+
+-- Lua Library inline imports
+local function __TS__ArrayFilter(self, callbackfn, thisArg)
+  local result = {}
+  local len = 0
+
+  for i = 1, #self do
+    if callbackfn(thisArg, self[i], i - 1, self) then
+      len = len + 1
+      result[len] = self[i]
+    end
+  end
+
+  return result
+end
+
+-- End of Lua Library inline imports
+local logStatus, pushStatus, statusFragment, respondPoll, patchNext, startPatching, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, busy, timeoutTimer, pendingScripts, pendingItems, scriptLoadTimer, pollRequestId, pollTimer, statusLog
+local setupAutoUpdate = setup
+local isAutoUpdateEnabled = isEnabled
+local enableAutoUpdate = enable
+local disableAutoUpdate = disable
+
+function logStatus(message)
+  ll.OwnerSay(message)
+  statusLog[#statusLog + 1] = message
+
+  if #statusLog > 20 then
+    table.remove(statusLog, 1)
+  end
+end
+
+function pushStatus(message)
+  logStatus(message)
+
+  if pollRequestId ~= "" then
+    respondPoll()
+  end
+end
+
+function statusFragment()
+  return buildStatusFragment(busy, completedItems, totalItems, statusLog)
+end
+
+function respondPoll()
+  if pollRequestId == "" then
+    return
+  end
+
+  respondHtml(pollRequestId, statusFragment())
+  pollRequestId = ""
+
+  if pollTimer then
+    LLTimers:off(pollTimer)
+    pollTimer = nil
+  end
+end
+
+function patchNext()
+  if queueIndex >= #patchQueue then
+    busy = false
+    patchQueue = {}
+    patchItemFilter = {}
     queueIndex = 0
-    completedItems = 0
-    busy = true
-    totalItems = 0
-    for ____, obj in ipairs(queue) do
-        local ____getItemsForObject_result_1 = getItemsForObject(nil, SELF_NAME, obj)
-        local scripts = ____getItemsForObject_result_1.scripts
-        local items = ____getItemsForObject_result_1.items
-        local filter = patchItemFilter[obj]
-        if filter and #filter > 0 then
-            totalItems = totalItems + #__TS__ArrayFilter(
-                scripts,
-                function(____, s) return table.find(filter, s) ~= nil end
-            )
-            totalItems = totalItems + #__TS__ArrayFilter(
-                items,
-                function(____, it) return table.find(filter, it) ~= nil end
-            )
-        else
-            totalItems = totalItems + (#scripts + #items)
-        end
+
+    local pending = flushPending()
+
+    if #pending > 0 then
+      pushStatus(("Auto-update: patching " .. tostring(#pending)) .. " queued object(s)...")
+      startPatching(pending, nil, false)
+
+      return
     end
-    if resetLog then
-        statusLog = {}
+
+    clearStatus()
+    pushStatus("All objects patched.")
+
+    return
+  end
+
+  currentObjectName = patchQueue[queueIndex + 1]
+  queueIndex = queueIndex + 1
+
+  local ____getItemsForObject_result_0 = getItemsForObject(SELF_NAME, currentObjectName)
+  local scripts = ____getItemsForObject_result_0.scripts
+  local items = ____getItemsForObject_result_0.items
+  local filter = patchItemFilter[currentObjectName]
+
+  if filter and #filter > 0 then
+    pendingScripts = __TS__ArrayFilter(scripts, function(____, s)
+      return table.find(filter, s) ~= nil
+    end)
+    pendingItems = __TS__ArrayFilter(items, function(____, it)
+      return table.find(filter, it) ~= nil
+    end)
+  else
+    pendingScripts = scripts
+    pendingItems = items
+  end
+
+  if #pendingScripts == 0 and #pendingItems == 0 then
+    pushStatus(("No items found for " .. currentObjectName) .. ", skipping.")
+    patchNext()
+
+    return
+  end
+
+  setStatus(
+    (
+      (
+        (
+          (
+            (
+              (
+                (((currentObjectName .. "\n") .. tostring(#pendingScripts)) .. " script(s), ") .. tostring(
+                  #pendingItems
+                )
+              ) .. " item(s)"
+            ) .. "\n["
+          ) .. tostring(completedItems)
+        ) .. "/"
+      ) .. tostring(totalItems)
+    ) .. "]"
+  )
+  pushStatus(
+    ((((("Rezzing " .. currentObjectName) .. "... [") .. tostring(completedItems)) .. "/") .. tostring(totalItems))
+      .. "]"
+  )
+  currentObjectId = ll.RezObjectWithParams(currentObjectName, {
+    REZ_POS,
+    vector.create(0, 0, 1),
+    1,
+    0,
+    REZ_PARAM,
+    PIN,
+  })
+
+  local timeoutSeconds = #pendingScripts * 3.5 + 10
+
+  timeoutTimer = LLTimers:once(timeoutSeconds, function()
+    stopParticles()
+
+    if scriptLoadTimer then
+      LLTimers:off(scriptLoadTimer)
+      scriptLoadTimer = nil
     end
-    pushStatus(
-        nil,
-        ((("Patching " .. tostring(totalItems)) .. " item(s) across ") .. tostring(#queue)) .. " object(s)..."
-    )
-    patchNext(nil)
+
+    pushStatus(("Timeout waiting for " .. currentObjectName) .. ", derezing.")
+    ll.DerezObject(currentObjectId, DEREZ_DIE)
+    timeoutTimer = nil
+    patchNext()
+  end)
 end
-function respondHtml(self, requestId, body)
-    ll.SetContentType(requestId, CONTENT_TYPE_XHTML)
-    ll.HTTPResponse(requestId, 200, body)
+
+function startPatching(queue, itemFilter, resetLog)
+  if resetLog == nil then
+    resetLog = true
+  end
+
+  patchQueue = queue
+  patchItemFilter = itemFilter or {}
+  queueIndex = 0
+  completedItems = 0
+  busy = true
+  totalItems = 0
+
+  for ____, obj in ipairs(queue) do
+    local ____getItemsForObject_result_1 = getItemsForObject(SELF_NAME, obj)
+    local scripts = ____getItemsForObject_result_1.scripts
+    local items = ____getItemsForObject_result_1.items
+    local filter = patchItemFilter[obj]
+
+    if filter and #filter > 0 then
+      totalItems = totalItems
+        + #__TS__ArrayFilter(scripts, function(____, s)
+          return table.find(filter, s) ~= nil
+        end)
+      totalItems = totalItems
+        + #__TS__ArrayFilter(items, function(____, it)
+          return table.find(filter, it) ~= nil
+        end)
+    else
+      totalItems = totalItems + (#scripts + #items)
+    end
+  end
+
+  if resetLog then
+    statusLog = {}
+  end
+
+  pushStatus(((("Patching " .. tostring(totalItems)) .. " item(s) across ") .. tostring(#queue)) .. " object(s)...")
+  patchNext()
 end
+
+function respondHtml(requestId, body)
+  ll.SetContentType(requestId, CONTENT_TYPE_XHTML)
+  ll.HTTPResponse(requestId, 200, body)
+end
+
 SELF_NAME = ll.GetScriptName()
 currentObjectName = ""
 patchQueue = {}
@@ -823,320 +849,274 @@ busy = false
 timeoutTimer = nil
 pendingScripts = {}
 pendingItems = {}
+
 --- Index into pendingScripts for timer-based sequential loading.
 local pendingScriptIdx = 0
+
 scriptLoadTimer = nil
+
 --- The HTTP-in URL assigned by the simulator.
 local httpUrl = ""
+
 pollRequestId = ""
 pollTimer = nil
 statusLog = {}
+
 --- Loads pending scripts one at a time using a timer chain.
 -- Yields to the event loop between loads so the browser can re-establish
 -- its long poll and receive real-time progress updates.
-local function loadNextScript(self)
-    if pendingScriptIdx >= #pendingScripts then
-        stopParticles(nil)
-        ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
-        return
-    end
-    local script = pendingScripts[pendingScriptIdx + 1]
-    local name = targetItemName(nil, script)
-    setStatus(
-        nil,
-        ((((((currentObjectName .. "\nLoading ") .. name) .. "\n[") .. tostring(completedItems)) .. "/") .. tostring(totalItems)) .. "]"
-    )
-    pushStatus(nil, (("Loading " .. name) .. " into ") .. currentObjectName)
-    ll.RemoteLoadScriptPin(
-        currentObjectId,
-        script,
-        PIN,
-        1,
-        0
-    )
-    completedItems = completedItems + 1
-    pendingScriptIdx = pendingScriptIdx + 1
-    scriptLoadTimer = LLTimers:once(
-        0.5,
-        function()
-            scriptLoadTimer = nil
-            loadNextScript(nil)
-        end
-    )
+local function loadNextScript()
+  if pendingScriptIdx >= #pendingScripts then
+    stopParticles()
+    ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
+
+    return
+  end
+
+  local script = pendingScripts[pendingScriptIdx + 1]
+  local name = targetItemName(script)
+
+  setStatus(
+    (
+      (((((currentObjectName .. "\nLoading ") .. name) .. "\n[") .. tostring(completedItems)) .. "/")
+      .. tostring(totalItems)
+    ) .. "]"
+  )
+  pushStatus((("Loading " .. name) .. " into ") .. currentObjectName)
+
+  ll.RemoteLoadScriptPin(currentObjectId, script, PIN, 1, 0)
+  completedItems = completedItems + 1
+  pendingScriptIdx = pendingScriptIdx + 1
+  scriptLoadTimer = LLTimers:once(0.5, function()
+    scriptLoadTimer = nil
+    loadNextScript()
+  end)
 end
+
 --- Releases the current HTTP-in URL and requests a new one.
-local function refreshUrl(self)
-    pollRequestId = ""
-    if pollTimer then
-        LLTimers:off(pollTimer)
-        pollTimer = nil
-    end
-    if httpUrl ~= "" then
-        ll.ReleaseURL(httpUrl)
-        httpUrl = ""
-    end
-    ll.RequestURL()
+local function refreshUrl()
+  pollRequestId = ""
+
+  if pollTimer then
+    LLTimers:off(pollTimer)
+    pollTimer = nil
+  end
+
+  if httpUrl ~= "" then
+    ll.ReleaseURL(httpUrl)
+    httpUrl = ""
+  end
+
+  ll.RequestURL()
 end
-LLEvents:on(
-    "http_request",
-    function(requestId, method, body)
-        if method == URL_REQUEST_GRANTED then
-            httpUrl = body
-            ll.OwnerSay("Web UI: " .. httpUrl)
-            return
+
+LLEvents:on("http_request", function(requestId, method, body)
+  if method == URL_REQUEST_GRANTED then
+    httpUrl = body
+    ll.OwnerSay("Web UI: " .. httpUrl)
+
+    return
+  end
+
+  if method == URL_REQUEST_DENIED then
+    ll.OwnerSay("Failed to get HTTP URL: " .. body)
+
+    return
+  end
+
+  local url = ll.GetHTTPHeader(requestId, "x-path-info")
+
+  if method == "GET" then
+    if url == "" or url == "/" then
+      respondHtml(requestId, pageShell(httpUrl, ll.GetObjectName()))
+    elseif url == "/app" then
+      respondHtml(requestId, appFragment(ll.GetObjectName()))
+    elseif url == "/objects" then
+      respondHtml(requestId, buildObjectList(SELF_NAME))
+    elseif url == "/poll" then
+      if pollRequestId ~= "" then
+        respondHtml(pollRequestId, statusFragment())
+      end
+
+      pollRequestId = requestId
+
+      if pollTimer then
+        LLTimers:off(pollTimer)
+      end
+
+      pollTimer = LLTimers:once(20, function()
+        pollTimer = nil
+        respondPoll()
+      end)
+    elseif url == "/autoupdate" then
+      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()))
+    else
+      ll.HTTPResponse(requestId, 404, "Not found")
+    end
+  elseif method == "POST" then
+    if url == "/patch" then
+      if busy then
+        respondHtml(requestId, statusFragment())
+
+        return
+      end
+
+      local ____parseFormItems_result_2 = parseFormItems(body)
+      local queue = ____parseFormItems_result_2.queue
+      local filter = ____parseFormItems_result_2.filter
+
+      if #queue == 0 then
+        respondHtml(requestId, NO_ITEMS_SELECTED)
+
+        return
+      end
+
+      startPatching(queue, filter)
+
+      respondHtml(requestId, statusFragment())
+    elseif url == "/patch-all" then
+      if busy then
+        respondHtml(requestId, statusFragment())
+
+        return
+      end
+
+      local queue = {}
+
+      for ____, obj in ipairs(getObjectNames()) do
+        local ____getItemsForObject_result_3 = getItemsForObject(SELF_NAME, obj)
+        local scripts = ____getItemsForObject_result_3.scripts
+        local items = ____getItemsForObject_result_3.items
+
+        if #scripts > 0 or #items > 0 then
+          queue[#queue + 1] = obj
         end
-        if method == URL_REQUEST_DENIED then
-            ll.OwnerSay("Failed to get HTTP URL: " .. body)
-            return
-        end
-        local url = ll.GetHTTPHeader(requestId, "x-path-info")
-        if method == "GET" then
-            if url == "" or url == "/" then
-                respondHtml(
-                    nil,
-                    requestId,
-                    pageShell(
-                        nil,
-                        httpUrl,
-                        ll.GetObjectName()
-                    )
-                )
-            elseif url == "/app" then
-                respondHtml(
-                    nil,
-                    requestId,
-                    appFragment(
-                        nil,
-                        ll.GetObjectName()
-                    )
-                )
-            elseif url == "/objects" then
-                respondHtml(
-                    nil,
-                    requestId,
-                    buildObjectList(nil, SELF_NAME)
-                )
-            elseif url == "/poll" then
-                if pollRequestId ~= "" then
-                    respondHtml(
-                        nil,
-                        pollRequestId,
-                        statusFragment(nil)
-                    )
-                end
-                pollRequestId = requestId
-                if pollTimer then
-                    LLTimers:off(pollTimer)
-                end
-                pollTimer = LLTimers:once(
-                    20,
-                    function()
-                        pollTimer = nil
-                        respondPoll(nil)
-                    end
-                )
-            elseif url == "/autoupdate" then
-                respondHtml(
-                    nil,
-                    requestId,
-                    buildAutoUpdateControls(
-                        nil,
-                        isAutoUpdateEnabled(nil),
-                        getDebounceSeconds(nil)
-                    )
-                )
-            else
-                ll.HTTPResponse(requestId, 404, "Not found")
-            end
-        elseif method == "POST" then
-            if url == "/patch" then
-                if busy then
-                    respondHtml(
-                        nil,
-                        requestId,
-                        statusFragment(nil)
-                    )
-                    return
-                end
-                local ____parseFormItems_result_2 = parseFormItems(nil, body)
-                local queue = ____parseFormItems_result_2.queue
-                local filter = ____parseFormItems_result_2.filter
-                if #queue == 0 then
-                    respondHtml(nil, requestId, NO_ITEMS_SELECTED)
-                    return
-                end
-                startPatching(nil, queue, filter)
-                respondHtml(
-                    nil,
-                    requestId,
-                    statusFragment(nil)
-                )
-            elseif url == "/patch-all" then
-                if busy then
-                    respondHtml(
-                        nil,
-                        requestId,
-                        statusFragment(nil)
-                    )
-                    return
-                end
-                local queue = {}
-                for ____, obj in ipairs(getObjectNames(nil)) do
-                    local ____getItemsForObject_result_3 = getItemsForObject(nil, SELF_NAME, obj)
-                    local scripts = ____getItemsForObject_result_3.scripts
-                    local items = ____getItemsForObject_result_3.items
-                    if #scripts > 0 or #items > 0 then
-                        queue[#queue + 1] = obj
-                    end
-                end
-                if #queue > 0 then
-                    startPatching(nil, queue)
-                end
-                respondHtml(
-                    nil,
-                    requestId,
-                    statusFragment(nil)
-                )
-            elseif url == "/autoupdate" then
-                if parseFormValue(nil, body, "enabled") == "on" then
-                    enableAutoUpdate(nil)
-                else
-                    disableAutoUpdate(nil)
-                end
-                respondHtml(
-                    nil,
-                    requestId,
-                    buildAutoUpdateControls(
-                        nil,
-                        isAutoUpdateEnabled(nil),
-                        getDebounceSeconds(nil)
-                    )
-                )
-            elseif url == "/autoupdate-debounce" then
-                local seconds = tonumber(parseFormValue(nil, body, "debounce") or "")
-                if seconds ~= nil and seconds >= 1 and seconds <= 60 then
-                    setDebounceSeconds(nil, seconds)
-                end
-                respondHtml(
-                    nil,
-                    requestId,
-                    buildAutoUpdateControls(
-                        nil,
-                        isAutoUpdateEnabled(nil),
-                        getDebounceSeconds(nil)
-                    )
-                )
-            else
-                ll.HTTPResponse(requestId, 404, "Not found")
-            end
+      end
+
+      if #queue > 0 then
+        startPatching(queue)
+      end
+
+      respondHtml(requestId, statusFragment())
+    elseif url == "/autoupdate" then
+      if parseFormValue(body, "enabled") == "on" then
+        enableAutoUpdate()
+      else
+        disableAutoUpdate()
+      end
+
+      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()))
+    elseif url == "/autoupdate-debounce" then
+      local seconds = tonumber(parseFormValue(body, "debounce") or "")
+
+      if seconds ~= nil and seconds >= 1 and seconds <= 60 then
+        setDebounceSeconds(seconds)
+      end
+
+      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()))
+    else
+      ll.HTTPResponse(requestId, 404, "Not found")
+    end
+  else
+    ll.HTTPResponse(requestId, 405, "Method not allowed")
+  end
+end)
+
+LLEvents:on("listen", function(channel, _name, id, message)
+  if channel == CMD_CHANNEL then
+    if id ~= ll.GetOwner() then
+      return
+    end
+
+    if message == "url" then
+      if httpUrl ~= "" then
+        ll.OwnerSay(httpUrl)
+      else
+        ll.OwnerSay("HTTP URL not yet available.")
+      end
+    elseif message == "auto" or string.find(message, "auto ", 1, true) == 1 then
+      local arg = ll.StringTrim(string.sub(message, 6), STRING_TRIM)
+
+      if arg ~= "" then
+        local seconds = tonumber(arg)
+
+        if seconds ~= nil and seconds >= 1 then
+          setDebounceSeconds(seconds)
+          enableAutoUpdate()
+          ll.OwnerSay(("Auto-update enabled (" .. tostring(seconds)) .. "s debounce).")
         else
-            ll.HTTPResponse(requestId, 405, "Method not allowed")
+          ll.OwnerSay("Usage: /7 auto [seconds]")
         end
+      elseif isAutoUpdateEnabled() then
+        disableAutoUpdate()
+        ll.OwnerSay("Auto-update disabled.")
+      else
+        enableAutoUpdate()
+        ll.OwnerSay(("Auto-update enabled (" .. tostring(getDebounceSeconds())) .. "s debounce).")
+      end
     end
-)
-LLEvents:on(
-    "listen",
-    function(channel, _name, id, message)
-        if channel == CMD_CHANNEL then
-            if id ~= ll.GetOwner() then
-                return
-            end
-            if message == "url" then
-                if httpUrl ~= "" then
-                    ll.OwnerSay(httpUrl)
-                else
-                    ll.OwnerSay("HTTP URL not yet available.")
-                end
-            elseif message == "auto" or string.find(message, "auto ", 1, true) == 1 then
-                local arg = ll.StringTrim(
-                    string.sub(message, 6),
-                    STRING_TRIM
-                )
-                if arg ~= "" then
-                    local seconds = tonumber(arg)
-                    if seconds ~= nil and seconds >= 1 then
-                        setDebounceSeconds(nil, seconds)
-                        enableAutoUpdate(nil)
-                        ll.OwnerSay(("Auto-update enabled (" .. tostring(seconds)) .. "s debounce).")
-                    else
-                        ll.OwnerSay("Usage: /7 auto [seconds]")
-                    end
-                elseif isAutoUpdateEnabled(nil) then
-                    disableAutoUpdate(nil)
-                    ll.OwnerSay("Auto-update disabled.")
-                else
-                    enableAutoUpdate(nil)
-                    ll.OwnerSay(("Auto-update enabled (" .. tostring(getDebounceSeconds(nil))) .. "s debounce).")
-                end
-            end
-        elseif channel == COMM_CHANNEL and busy then
-            if message == "pinned" and id == currentObjectId then
-                for ____, item in ipairs(pendingItems) do
-                    ll.GiveInventory(currentObjectId, item)
-                    completedItems = completedItems + 1
-                end
-                startParticles(nil, currentObjectId)
-                pendingScriptIdx = 0
-                loadNextScript(nil)
-            elseif message == "ready" and id == currentObjectId then
-                if timeoutTimer then
-                    LLTimers:off(timeoutTimer)
-                    timeoutTimer = nil
-                end
-                if scriptLoadTimer then
-                    LLTimers:off(scriptLoadTimer)
-                    scriptLoadTimer = nil
-                end
-                logStatus(nil, currentObjectName .. " patched successfully.")
-                ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
-                patchNext(nil)
-            end
-        end
+  elseif channel == COMM_CHANNEL and busy then
+    if message == "pinned" and id == currentObjectId then
+      for ____, item in ipairs(pendingItems) do
+        ll.GiveInventory(currentObjectId, item)
+        completedItems = completedItems + 1
+      end
+
+      startParticles(currentObjectId)
+      pendingScriptIdx = 0
+      loadNextScript()
+    elseif message == "ready" and id == currentObjectId then
+      if timeoutTimer then
+        LLTimers:off(timeoutTimer)
+        timeoutTimer = nil
+      end
+
+      if scriptLoadTimer then
+        LLTimers:off(scriptLoadTimer)
+        scriptLoadTimer = nil
+      end
+
+      logStatus(currentObjectName .. " patched successfully.")
+      ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
+      patchNext()
     end
-)
-LLEvents:on(
-    "on_rez",
-    function()
-        refreshUrl(nil)
-    end
-)
-LLEvents:on(
-    "attach",
-    function()
-        refreshUrl(nil)
-    end
-)
-LLEvents:on(
-    "changed",
-    function(change)
-        if bit32.btest(change, CHANGED_INVENTORY) then
-            onInventoryChanged(nil)
-        end
-        if bit32.btest(
-            change,
-            bit32.bor(CHANGED_REGION, CHANGED_REGION_START)
-        ) then
-            refreshUrl(nil)
-        end
-    end
-)
+  end
+end)
+
+LLEvents:on("on_rez", function()
+  refreshUrl()
+end)
+
+LLEvents:on("attach", function()
+  refreshUrl()
+end)
+
+LLEvents:on("changed", function(change)
+  if bit32.btest(change, CHANGED_INVENTORY) then
+    onInventoryChanged()
+  end
+
+  if bit32.btest(change, bit32.bor(CHANGED_REGION, CHANGED_REGION_START)) then
+    refreshUrl()
+  end
+end)
+
 ll.Listen(CMD_CHANNEL, "", NULL_KEY, "")
 ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
 ll.RequestURL()
-setupAutoUpdate(
-    nil,
-    SELF_NAME,
-    startPatching,
-    function() return busy end,
-    pushStatus
-)
+
+setupAutoUpdate(SELF_NAME, startPatching, function()
+  return busy
+end, pushStatus)
+
 do
-    local used = ll.GetUsedMemory()
-    local limit = ll.GetMemoryLimit()
-    ll.OwnerSay(((((("Memory: " .. tostring(used // 1024)) .. "KB / ") .. tostring(limit // 1024)) .. "KB (") .. tostring(math.floor(used / limit * 100))) .. "%)")
+  local used = ll.GetUsedMemory()
+  local limit = ll.GetMemoryLimit()
+
+  ll.OwnerSay(
+    (
+      (((("Memory: " .. tostring(used // 1024)) .. "KB / ") .. tostring(limit // 1024)) .. "KB (")
+      .. tostring(math.floor(used / limit * 100))
+    ) .. "%)"
+  )
 end
-return ____exports
- end,
-}
-local ____entry = require("patcher.index", ...)
-return ____entry

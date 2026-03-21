@@ -1,10 +1,4 @@
-import {
-  getObjectNames,
-  getItemsForObject,
-  patternMatches,
-  targetItemName,
-  inventoryTypeLabel,
-} from "./inventory";
+import { getObjectNames, getItemsForObject, patternMatches, targetItemName, inventoryTypeLabel } from "./inventory";
 
 const EMPTY_STATE = <div class="empty-state">No patchable objects found in inventory.</div>;
 
@@ -18,11 +12,7 @@ export const NO_ITEMS_SELECTED = <b>No items selected</b>;
 
 /** Escapes HTML special characters to prevent XSS. */
 function escapeHtml(s: string): string {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+  return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
 /** Builds an inventory row with a type-specific badge. */
@@ -254,13 +244,7 @@ export function buildAutoUpdateControls(enabled: boolean, debounce: number) {
         <div class="panel-header">Settings</div>
         <div class="panel-body">
           <label>
-            <input
-              type="checkbox"
-              name="enabled"
-              checked
-              hx-post="autoupdate"
-              hx-target="#autoupdate"
-            />
+            <input type="checkbox" name="enabled" checked hx-post="autoupdate" hx-target="#autoupdate" />
             {" Auto-update"}
           </label>
           <label class="debounce-label">

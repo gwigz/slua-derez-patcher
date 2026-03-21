@@ -1,5 +1,5 @@
 --[[
-SLua Derez Patcher — bootstrap receiver for target objects.
+SLua Derez Patcher — bootstrap receiver for target objects
 
 Drop this script into every object that the patcher should be able to
 update. It sets a remote script access PIN so the patcher can load
@@ -22,28 +22,27 @@ local PIN = 87654321
 --[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 --- Active listen handle, or 0 when not listening.
 local listenHandle = 0
+
 ll.SetRemoteScriptAccessPin(PIN)
-LLEvents:on(
-    "on_rez",
-    function(startParam)
-        if startParam == PIN then
-            if listenHandle ~= 0 then
-                ll.ListenRemove(listenHandle)
-            end
-            listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
-            ll.RegionSay(COMM_CHANNEL, "pinned")
-        end
+
+LLEvents:on("on_rez", function(startParam)
+  if startParam == PIN then
+    if listenHandle ~= 0 then
+      ll.ListenRemove(listenHandle)
     end
-)
-LLEvents:on(
-    "listen",
-    function(channel, name, id, message)
-        if channel == COMM_CHANNEL and message == "done" then
-            ll.RegionSayTo(id, COMM_CHANNEL, "ready")
-            if listenHandle ~= 0 then
-                ll.ListenRemove(listenHandle)
-                listenHandle = 0
-            end
-        end
+
+    listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
+    ll.RegionSay(COMM_CHANNEL, "pinned")
+  end
+end)
+
+LLEvents:on("listen", function(channel, name, id, message)
+  if channel == COMM_CHANNEL and message == "done" then
+    ll.RegionSayTo(id, COMM_CHANNEL, "ready")
+
+    if listenHandle ~= 0 then
+      ll.ListenRemove(listenHandle)
+      listenHandle = 0
     end
-)
+  end
+end)

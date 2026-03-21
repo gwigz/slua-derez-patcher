@@ -1,5 +1,5 @@
 /**
- * SLua Derez Patcher — bootstrap receiver for target objects.
+ * SLua Derez Patcher — bootstrap receiver for target objects
  *
  * Drop this script into every object that the patcher should be able to
  * update. It sets a remote script access PIN so the patcher can load

@@ -21,10 +21,7 @@ export function wildcardMatches(objectName: string, pattern: string) {
   if (starIdx === 0) {
     const suffix = pattern.substring(1);
 
-    return (
-      objectName.length >= suffix.length &&
-      objectName.substring(objectName.length - suffix.length) === suffix
-    );
+    return objectName.length >= suffix.length && objectName.substring(objectName.length - suffix.length) === suffix;
   }
 
   return objectName.startsWith(pattern.substring(0, starIdx));

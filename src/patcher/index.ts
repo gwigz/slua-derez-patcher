@@ -1,10 +1,10 @@
 /**
- * SLua Derez Patcher — bulk inventory updater for Second Life objects.
+ * SLua Derez Patcher — bulk inventory updater for Second Life objects
  *
  * Place this script inside a prim alongside the objects you want to patch.
  * Each object must contain a copy of the bootstrap script (bootstrap.slua).
  * Scripts and items in the prim's inventory are matched to objects by naming
- * convention — see inventory.ts for details.
+ * convention, see inventory.ts for details.
  *
  * On startup, an HTTP-in URL is requested and printed to owner chat. Open
  * it in a browser to access the web UI, or use chat commands on channel 7:
@@ -166,9 +166,7 @@ function loadNextScript() {
   const script = pendingScripts[pendingScriptIdx];
   const name = targetItemName(script);
 
-  setStatus(
-    currentObjectName + "\nLoading " + name + "\n[" + completedItems + "/" + totalItems + "]",
-  );
+  setStatus(currentObjectName + "\nLoading " + name + "\n[" + completedItems + "/" + totalItems + "]");
 
   pushStatus(`Loading ${name} into ${currentObjectName}`);
 
@@ -252,14 +250,7 @@ function patchNext() {
   pushStatus(`Rezzing ${currentObjectName}... [${completedItems}/${totalItems}]`);
 
   // Rez 1m above prim center with PIN as start param
-  currentObjectId = ll.RezObjectWithParams(currentObjectName, [
-    REZ_POS,
-    new Vector(0, 0, 1),
-    1,
-    0,
-    REZ_PARAM,
-    PIN,
-  ]);
+  currentObjectId = ll.RezObjectWithParams(currentObjectName, [REZ_POS, new Vector(0, 0, 1), 1, 0, REZ_PARAM, PIN]);
 
   // 3.5s per script (RemoteLoadScriptPin delay) plus 10s buffer
   const timeoutSeconds = pendingScripts.length * 3.5 + 10;

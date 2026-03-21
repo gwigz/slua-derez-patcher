@@ -98,12 +98,9 @@ export function pageShell(baseUrl: string, objectName: string) {
         <title>{objectName}</title>
         <link
           rel="icon"
-          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><text y='1em'>📝</text></svg>"
+          href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🎯</text></svg>'
         />
-        <link
-          rel="stylesheet"
-          href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css"
-        />
+        <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css" />
         <script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
         <script>
           {`/*<![CDATA[*/document.addEventListener('alpine:init',()=>{Alpine.data('patcher',${patcherData.toString()})})/*]]>*/`}
@@ -264,11 +261,7 @@ export function appFragment(objectName: string) {
       <form x-data="patcher">
         <div class="toolbar">
           <label>
-            <input
-              type="checkbox"
-              {...{ "x-bind:checked": "allChecked", "x-on:click": "toggleAll()" }}
-            />{" "}
-            All
+            <input type="checkbox" {...{ "x-bind:checked": "allChecked", "x-on:click": "toggleAll()" }} /> All
           </label>
           <b style="flex:1"></b>
           <button

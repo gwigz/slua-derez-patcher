@@ -3,7 +3,9 @@ import * as tstl from "typescript-to-lua";
 import { minify } from "html-minifier-terser";
 import { Node, Project, SyntaxKind } from "ts-morph";
 import { watch, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { resolve, basename } from "node:path";
+
 import * as constants from "./src/constants";
 
 const WATCH = process.argv.includes("--watch");
@@ -218,6 +220,138 @@ function applyShorteningMap(html: string, map: ShorteningMap): string {
   return html;
 }
 
+/** Adds blank lines at natural code boundaries for readable Lua output. */
+function formatLua(code: string): string {
+  // After `end` at any indent, unless followed by end/else/elseif/)/}/,
+  code = code.replace(/^(\s*end)\n(?!\n|\s*end\b|\s*else\b|\s*elseif\b|\s*\)|\s*[}\]]|\s*,)/gm, "$1\n\n");
+
+  // After top-level `)` or `}` followed by code
+  code = code.replace(/^([)}])\n(?!\n|[)}])/gm, "$1\n\n");
+
+  // After `local` block when followed by non-local code
+  code = code.replace(/^(\s*local (?!function\b)\w[^\n]*)\n([^\S\n]*(?!local\b|--)\S)/gm, "$1\n\n$2");
+
+  // Before `local` declarations when preceded by non-local, non-comment code
+  code = code.replace(/^([^\n]+)\n([^\S\n]*local (?!function\b)\w)/gm, (match, prev: string, localLine: string) => {
+    if (
+      /^\s*local\b/.test(prev) ||
+      /^\s*--/.test(prev) ||
+      /^\s*$/.test(prev) ||
+      /(?:then|do|else|repeat)$/.test(prev.trimEnd()) ||
+      /\bfunction\b.*\)\s*$/.test(prev.trimEnd())
+    ) {
+      return match;
+    }
+    return prev + "\n\n" + localLine;
+  });
+
+  // Before multiline calls (line opens paren/brace but doesn't close it)
+  code = code.replace(/^(.+)\n([^\S\n]*\w[\w.:]*\([^)]*$)/gm, (match, prev: string, callLine: string) => {
+    const trimmed = prev.trimEnd();
+    if (
+      /^\s*--/.test(prev) ||
+      /^\s*$/.test(prev) ||
+      /^\s*end\b/.test(prev) ||
+      /(?:then|do|else|repeat)$/.test(trimmed) ||
+      /\bfunction\b.*\)\s*$/.test(trimmed)
+    ) {
+      return match;
+    }
+    return prev + "\n\n" + callLine;
+  });
+
+  // Before block keywords or `return` when preceded by non-block-opener code
+  code = code.replace(/^(.+)\n([^\S\n]*(?:if|for|while|repeat|return)\b)/gm, (match, prev: string, keyword: string) => {
+    const trimmed = prev.trimEnd();
+    if (
+      /(?:then|do|else|repeat)$/.test(trimmed) ||
+      /\bfunction\b.*\)\s*$/.test(trimmed) ||
+      /^\s*end\b/.test(prev) ||
+      /^\s*---/.test(prev) ||
+      /^\s*$/.test(prev)
+    ) {
+      return match;
+    }
+    return prev + "\n\n" + keyword;
+  });
+
+  // Before doc comments (---) when preceded by code
+  code = code.replace(/^(.+)\n([^\S\n]*---)/gm, (match, prev: string, comment: string) => {
+    if (/^\s*--/.test(prev) || /^\s*$/.test(prev)) {
+      return match;
+    }
+    return prev + "\n\n" + comment;
+  });
+
+  // Before function definitions when preceded by code (not comments)
+  code = code.replace(/^(.+)\n([^\S\n]*(?:local )?function\b)/gm, (match, prev: string, fn: string) => {
+    if (/^\s*--/.test(prev) || /^\s*$/.test(prev)) {
+      return match;
+    }
+    return prev + "\n\n" + fn;
+  });
+
+  return code;
+}
+
+/**
+ * Flattens a TSTL bundle by eliminating the module system entirely.
+ *
+ * TSTL's luaBundle wraps each module in a closure with a require() runtime.
+ * This rewrites the bundle to emit all module code in dependency order as
+ * top-level locals, removing the ____modules table, ____moduleCache,
+ * require() function, module closures, and import/export boilerplate.
+ */
+function flattenBundle(code: string): string {
+  const runtimeStart = code.indexOf("\nlocal ____modules = {}\n");
+
+  if (runtimeStart < 0) return code;
+
+  const header = code.substring(0, runtimeStart + 1);
+
+  // Extract module bodies in bundle order (TSTL emits dependencies first)
+  const moduleRegex = /\["([^"]+)"\] = function\([^)]*\)\s*\n([\s\S]*?)\n end,/g;
+  const bodies: string[] = [];
+
+  let match;
+
+  while ((match = moduleRegex.exec(code)) !== null) {
+    const [, name, rawBody] = match;
+
+    // Skip constants module, redundant with injected constants at top of file
+    if (name === "constants") {
+      continue;
+    }
+
+    let body = rawBody;
+
+    // Eliminate ____exports table pattern (function defs, value assignments, internal refs)
+    body = body.replace(/function ____exports\.(\w+)\s*\(/g, "local function $1(");
+    body = body.replace(/____exports\.(\w+)\s*=/g, "local $1 =");
+    body = body.replace(/____exports\./g, "");
+    body = body.replace(/local ____exports = \{\}\n/, "");
+
+    // Strip return (table constructor or bare ____exports)
+    body = body.replace(/\nreturn (?:____exports|\{[^}]*\})$/, "");
+
+    // Strip require() lines
+    body = body.replace(/^local ____\w+ = require\("[^"]+"\)\n/gm, "");
+
+    // Resolve import destructuring:
+    //   same name  -> remove (function already in scope from earlier module)
+    //   different  -> alias (local newName = originalName)
+    body = body.replace(/^local (\w+) = ____\w+\.(\w+)\n/gm, (_m, localName: string, exportName: string) =>
+      localName === exportName ? "" : `local ${localName} = ${exportName}\n`,
+    );
+
+    bodies.push(body.trim());
+  }
+
+  let result = header + bodies.join("\n\n") + "\n";
+
+  return formatLua(result);
+}
+
 /** Prepends file header comment and constants to a compiled .slua file. */
 function injectConstants(filePath: string, sourcePath: string, comments: Record<string, string>) {
   const content = readFileSync(filePath, "utf8");
@@ -315,11 +449,7 @@ function isJsxNode(node: Node): boolean {
 
   const kind = node.getKind();
 
-  return (
-    kind === SyntaxKind.JsxElement ||
-    kind === SyntaxKind.JsxSelfClosingElement ||
-    kind === SyntaxKind.JsxFragment
-  );
+  return kind === SyntaxKind.JsxElement || kind === SyntaxKind.JsxSelfClosingElement || kind === SyntaxKind.JsxFragment;
 }
 
 /** Returns true if a function body is exactly one return statement whose expression is JSX. */
@@ -391,11 +521,7 @@ function collectInlineJsxNodes(fn: import("ts-morph").FunctionDeclaration): Node
     while (parent && parent !== body) {
       const pk = parent.getKind();
 
-      if (
-        pk === SyntaxKind.JsxElement ||
-        pk === SyntaxKind.JsxSelfClosingElement ||
-        pk === SyntaxKind.JsxFragment
-      ) {
+      if (pk === SyntaxKind.JsxElement || pk === SyntaxKind.JsxSelfClosingElement || pk === SyntaxKind.JsxFragment) {
         return false;
       }
 
@@ -601,12 +727,8 @@ async function evaluateTsxModule(tsxPath: string) {
  * Phase B: applies shortening map to minified HTML, splits on slot markers,
  * builds string-concat expressions, and writes the .ts output.
  */
-function generateTsModule(
-  evaluated: Awaited<ReturnType<typeof evaluateTsxModule>>,
-  map: ShorteningMap,
-) {
-  const { tsxPath, source, templateFns, templateVars, depStmts, fnHtml, varHtml, inlineJsxData } =
-    evaluated;
+function generateTsModule(evaluated: Awaited<ReturnType<typeof evaluateTsxModule>>, map: ShorteningMap) {
+  const { tsxPath, source, templateFns, templateVars, depStmts, fnHtml, varHtml, inlineJsxData } = evaluated;
 
   // 1. Apply shortening + compile function templates
   for (const fn of templateFns) {
@@ -632,9 +754,7 @@ function generateTsModule(
   // 3. Compile inline JSX expressions (reverse source order to preserve positions)
   for (const { fn, entries } of inlineJsxData) {
     const fnName = fn.getName() || "anonymous";
-    const reversedEntries = [...entries].sort(
-      (a, b) => b.jsxNode.getStart() - a.jsxNode.getStart(),
-    );
+    const reversedEntries = [...entries].sort((a, b) => b.jsxNode.getStart() - a.jsxNode.getStart());
 
     for (const entry of reversedEntries) {
       const html = applyShorteningMap(entry.html, map);
@@ -735,8 +855,8 @@ async function build() {
 
   await compileTsxModules();
 
-  // Step 2: Patcher bundle
-  const patcherResult = tstl.transpileProject("tsconfig.app.json", {
+  // Step 2: Patcher bundle, and export elimination
+  const patcherResult = tstl.transpileProject("tsconfig.patcher.json", {
     noHeader: true,
     luaBundle: "patcher.slua",
     luaBundleEntry: resolve("src/patcher/index.ts"),
@@ -746,29 +866,36 @@ async function build() {
     hasErrors = true;
   }
 
+  const patcherPath = resolve("dist/patcher.slua");
+  const patcherCode = readFileSync(patcherPath, "utf8");
+
+  writeFileSync(patcherPath, flattenBundle(patcherCode));
+
   // Bootstrap standalone
-  const bootstrapResult = tstl.transpileFiles(
-    [resolve("src/types/globals.d.ts"), resolve("src/bootstrap.ts")],
-    {
-      rootDir: resolve("src"),
-      outDir: resolve("dist"),
-      target: 99, // ESNext
-      module: 99, // ESNext
-      strict: true,
-      moduleDetection: 3, // Force
-      skipLibCheck: true,
-      types: ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
-      luaTarget: tstl.LuaTarget.Luau,
-      luaLibImport: tstl.LuaLibImportKind.Inline,
-      extension: "slua",
-      noHeader: true,
-      luaPlugins: [{ name: "@gwigz/slua-tstl-plugin" }],
-    } as tstl.CompilerOptions,
-  );
+  const bootstrapResult = tstl.transpileFiles([resolve("src/types/globals.d.ts"), resolve("src/bootstrap.ts")], {
+    rootDir: resolve("src"),
+    outDir: resolve("dist"),
+    target: 99, // ESNext
+    module: 99, // ESNext
+    strict: true,
+    moduleDetection: 3, // Force
+    skipLibCheck: true,
+    types: ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
+    luaTarget: tstl.LuaTarget.Luau,
+    luaLibImport: tstl.LuaLibImportKind.Inline,
+    extension: "slua",
+    noHeader: true,
+    noImplicitSelf: true,
+    luaPlugins: [{ name: "@gwigz/slua-tstl-plugin" }],
+  } as tstl.CompilerOptions);
 
   if (reportDiagnostics(bootstrapResult.diagnostics)) {
     hasErrors = true;
   }
+
+  const bootstrapPath = resolve("dist/bootstrap.slua");
+
+  writeFileSync(bootstrapPath, formatLua(readFileSync(bootstrapPath, "utf8")));
 
   if (hasErrors) {
     return false;
@@ -778,7 +905,10 @@ async function build() {
   injectConstants(resolve("dist/patcher.slua"), "src/patcher/index.ts", comments);
   injectConstants(resolve("dist/bootstrap.slua"), "src/bootstrap.ts", comments);
 
-  // Step 4: Clean up generated .ts files so the editor resolves to .tsx sources
+  // Step 4: Format .slua output with StyLua
+  execSync("npx stylua --verify -- dist/patcher.slua dist/bootstrap.slua");
+
+  // Step 5: Clean up generated .ts files so the editor resolves to .tsx sources
   for (const tsxPath of TSX_SOURCES) {
     unlinkSync(tsxPath.replace(/\.tsx$/, ".ts"));
   }

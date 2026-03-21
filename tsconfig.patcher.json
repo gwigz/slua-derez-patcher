@@ -1,5 +1,7 @@
 {
+  "$schema": "https://raw.githubusercontent.com/TypeScriptToLua/TypeScriptToLua/master/tsconfig-schema.json",
   "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["src/bootstrap.ts"],
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -17,6 +19,7 @@
     "extension": "slua",
     "luaTarget": "Luau",
     "luaLibImport": "inline",
-    "luaPlugins": [{ "name": "@gwigz/slua-tstl-plugin" }]
+    "noImplicitSelf": true,
+    "luaPlugins": [{ "name": "@gwigz/slua-tstl-plugin" }, { "name": "tstl-const-propagation" }]
   }
 }

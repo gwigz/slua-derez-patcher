@@ -117,7 +117,7 @@ flowchart TD
     E --> H(dist/patcher.slua)
     E --> I(dist/bootstrap.slua)
     H --> J(build.ts post-process)
-    J -->|minify inline JS,\nshorten CSS classes| H
+    J -->|optimize exports,\nshorten CSS classes| H
 ```
 
 ### JSX Templates
