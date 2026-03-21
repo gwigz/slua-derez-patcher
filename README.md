@@ -116,7 +116,8 @@ flowchart TD
     G(src/bootstrap.ts) --> E
     E --> H(dist/patcher.slua)
     E --> I(dist/bootstrap.slua)
-    H -->|minify inline JS, shorten CSS classes| H
+    H --> J(build.ts post-process)
+    J -->|minify inline JS,\nshorten CSS classes| H
 ```
 
 ### JSX Templates
