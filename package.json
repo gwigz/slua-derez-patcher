@@ -10,7 +10,8 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt --write .",
-    "fmt:check": "oxfmt --check ."
+    "fmt:check": "oxfmt --check .",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@gwigz/slua-tstl-plugin": "^0.3.0",
@@ -19,6 +20,7 @@
     "@types/node": "^25.5.0",
     "@typescript-to-lua/language-extensions": "^1.19.0",
     "html-minifier-terser": "^7.2.0",
+    "husky": "^9.1.7",
     "oxfmt": "^0.41.0",
     "oxlint": "^1.56.0",
     "ts-morph": "^27.0.2",

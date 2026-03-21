@@ -8,6 +8,6 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["@types/bun"],
-  },
+    "types": ["@types/bun"]
+  }
 }
