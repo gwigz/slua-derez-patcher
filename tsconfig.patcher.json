@@ -20,6 +20,10 @@
     "luaTarget": "Luau",
     "luaLibImport": "inline",
     "noImplicitSelf": true,
-    "luaPlugins": [{ "name": "@gwigz/slua-tstl-plugin" }, { "name": "tstl-const-propagation" }]
+    "luaPlugins": [
+      { "name": "@gwigz/slua-tstl-plugin" },
+      { "name": "@gwigz/tstl-bundle-flatten", "skipModules": ["constants"] },
+      { "name": "tstl-const-propagation" }
+    ]
   }
 }

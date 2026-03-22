@@ -5,17 +5,17 @@
     "": {
       "name": "slua-derez-patcher",
       "devDependencies": {
+        "@gwigz/jsx-inline": "^1.0.1",
         "@gwigz/slua-tstl-plugin": "^1.0.0",
         "@gwigz/slua-types": "^1.0.0",
+        "@gwigz/tstl-bundle-flatten": "^1.0.0",
         "@johnnymorganz/stylua-bin": "^2.4.0",
         "@types/bun": "latest",
         "@types/node": "^25.5.0",
         "@typescript-to-lua/language-extensions": "^1.19.0",
-        "html-minifier-terser": "^7.2.0",
         "husky": "^9.1.7",
         "oxfmt": "^0.41.0",
         "oxlint": "^1.56.0",
-        "ts-morph": "^27.0.2",
         "tstl-const-propagation": "^2.0.4",
         "typed-htmx": "^0.3.1",
         "typescript-to-lua": "^1.34.0",
@@ -29,9 +29,13 @@
     "@johnnymorganz/stylua-bin",
   ],
   "packages": {
+    "@gwigz/jsx-inline": ["@gwigz/jsx-inline@1.0.1", "", { "dependencies": { "html-minifier-terser": "^7.2.0", "ts-morph": "^27.0.2" } }, "sha512-3kpWP+zjBGRIND9yC6K/mFpt8yvqPZcYoKZ0HTq3B4+acgJxX89fEw3KChtUOvbhF3rmzdUdhVf2cxm7i7xjSA=="],
+
     "@gwigz/slua-tstl-plugin": ["@gwigz/slua-tstl-plugin@1.0.0", "", { "dependencies": { "typescript-to-lua": "^1.33.0" }, "peerDependencies": { "@gwigz/slua-types": "^1.0.0", "typescript": "~5.9.3" } }, "sha512-GY6bZj9H97M+OA87eaHO5cEhLMJwRipjaGyS4qrccrMWVFgWkk0xzEMUbmj8yu7ywDWfhEy2shce5OX9pYt1og=="],
 
     "@gwigz/slua-types": ["@gwigz/slua-types@1.0.0", "", { "peerDependencies": { "@typescript-to-lua/language-extensions": "^1.0.0" } }, "sha512-r7j0RPyzddx7sQiuYvmfk8yOhO8mUdQAYQO6whWR6CooYs+6So6uU+sA3APmD8OrIOLI96h7cm9a9gq3t2Vdtg=="],
+
+    "@gwigz/tstl-bundle-flatten": ["@gwigz/tstl-bundle-flatten@1.0.0", "", { "peerDependencies": { "typescript-to-lua": ">=1.22.0" } }, "sha512-NG008guv/89CQ0vAtuymv76Gos5lCkuH8oRGip4Ws9uJNtMI572TyQhWfPol29cFBGVrVJIf6Xltg4v8GKHsgA=="],
 
     "@johnnymorganz/stylua-bin": ["@johnnymorganz/stylua-bin@2.4.0", "", { "dependencies": { "axios": "^1.6.0", "node-fetch": "^3.2.10", "proxy-agent": "^6.4.0", "rimraf": "^3.0.2", "unzipper": "^0.10.11" }, "bin": { "stylua": "run.js" } }, "sha512-+gICnpcp7bt+baCH9sbHIx4WHSeVK3yqNuPEHRQzav9+yFj0oQnP7EhuEJAAuKp8D3xqFFiwVcMcC+u1PzoQOQ=="],
 
