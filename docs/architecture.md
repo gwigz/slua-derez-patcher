@@ -123,16 +123,16 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A(src/patcher/*.tsx) -->|@gwigz/jsx-inline| B(generated .ts files)
-    B --> C(TSTL)
-    D(src/patcher/*.ts) --> C
-    E(src/bootstrap.ts) --> C
-    C -->|@gwigz/tstl-bundle-flatten| F(dist/patcher.slua)
-    C --> G(dist/bootstrap.slua)
-    F --> H(build.ts post-process)
+    A["src/patcher/*.tsx"] -->|"@gwigz/jsx-inline"| B["generated .ts files"]
+    B --> C["TSTL"]
+    D["src/patcher/*.ts"] --> C
+    E["src/bootstrap.ts"] --> C
+    C -->|"@gwigz/tstl-bundle-flatten"| F["dist/patcher.slua"]
+    C --> G["dist/bootstrap.slua"]
+    F --> H["build.ts post-process"]
     G --> H
-    H -->|inject constants,\nStyLua format| F
-    H -->|inject constants,\nStyLua format| G
+    H -->|"inject constants, StyLua format"| F
+    H -->|"inject constants, StyLua format"| G
 ```
 
 ## JSX Templates
