@@ -4,8 +4,11 @@
   "workspaces": {
     "": {
       "name": "slua-derez-patcher",
+      "dependencies": {
+        "@gwigz/slick-css": "^1.0.0",
+      },
       "devDependencies": {
-        "@gwigz/jsx-inline": "^1.0.1",
+        "@gwigz/jsx-inline": "^1.1.0",
         "@gwigz/slua-tstl-plugin": "^1.0.0",
         "@gwigz/slua-types": "^1.0.0",
         "@gwigz/tstl-bundle-flatten": "^1.0.0",
@@ -29,7 +32,9 @@
     "@johnnymorganz/stylua-bin",
   ],
   "packages": {
-    "@gwigz/jsx-inline": ["@gwigz/jsx-inline@1.0.1", "", { "dependencies": { "html-minifier-terser": "^7.2.0", "ts-morph": "^27.0.2" } }, "sha512-3kpWP+zjBGRIND9yC6K/mFpt8yvqPZcYoKZ0HTq3B4+acgJxX89fEw3KChtUOvbhF3rmzdUdhVf2cxm7i7xjSA=="],
+    "@gwigz/jsx-inline": ["@gwigz/jsx-inline@1.1.0", "", { "dependencies": { "html-minifier-terser": "^7.2.0", "ts-morph": "^27.0.2" } }, "sha512-srCeLt5fxfif22p4+xyoBfvW2Hr4egOmWOarJWnGNB4H2JUEAPwa16ntdbpOKuYXvIc/u3uuASZvdgdRTF0/SA=="],
+
+    "@gwigz/slick-css": ["@gwigz/slick-css@1.0.0", "", {}, "sha512-pLNbtHzdjEw5nb57lfr8sjfgfLyW/z7ULnWZ2o87gKv9sl4/z6rDtjfd3b7CBVizShMwH6upSsjT0RKydCS1ag=="],
 
     "@gwigz/slua-tstl-plugin": ["@gwigz/slua-tstl-plugin@1.0.0", "", { "dependencies": { "typescript-to-lua": "^1.33.0" }, "peerDependencies": { "@gwigz/slua-types": "^1.0.0", "typescript": "~5.9.3" } }, "sha512-GY6bZj9H97M+OA87eaHO5cEhLMJwRipjaGyS4qrccrMWVFgWkk0xzEMUbmj8yu7ywDWfhEy2shce5OX9pYt1og=="],
 

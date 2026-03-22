@@ -14,8 +14,11 @@
     "fmt:check": "oxfmt --check .",
     "prepare": "husky"
   },
+  "dependencies": {
+    "@gwigz/slick-css": "^1.0.0"
+  },
   "devDependencies": {
-    "@gwigz/jsx-inline": "^1.0.1",
+    "@gwigz/jsx-inline": "^1.1.0",
     "@gwigz/slua-tstl-plugin": "^1.0.0",
     "@gwigz/slua-types": "^1.0.0",
     "@gwigz/tstl-bundle-flatten": "^1.0.0",

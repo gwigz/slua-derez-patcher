@@ -124,7 +124,7 @@ async function build() {
 
   generateConstantDeclarations(comments);
 
-  await compile(TSX_SOURCES, { booleanAttrs: ["checked", "defer"] });
+  await compile(TSX_SOURCES);
 
   // Step 2: Patcher bundle, and export elimination
   const patcherResult = tstl.transpileProject("tsconfig.patcher.json", {
@@ -172,7 +172,12 @@ async function build() {
   injectConstants(bootstrapPath, readFileSync(bootstrapPath, "utf8"), "src/bootstrap.ts", comments);
 
   // Step 4: Format .slua output with StyLua
-  execSync("npx stylua --verify -- dist/patcher.slua dist/bootstrap.slua");
+  try {
+    execSync("npx stylua --verify -- dist/patcher.slua dist/bootstrap.slua");
+  } catch (e: unknown) {
+    console.warn("warning: stylua formatting failed");
+    if (e instanceof Error && "stderr" in e) console.warn(String(e.stderr));
+  }
 
   // Step 5: Clean up generated .ts files so the editor resolves to .tsx sources
   for (const tsxPath of TSX_SOURCES) {
@@ -189,15 +194,44 @@ await build();
 if (WATCH) {
   console.log("Watching src/ for changes...");
 
+  let debounce: Timer | null = null;
+  let building = false;
+  let pending = false;
+
   watch(resolve("src"), { recursive: true }, (_event: string, filename: string | null) => {
     if (
-      filename &&
-      (filename.endsWith(".ts") || filename.endsWith(".tsx")) &&
-      !GENERATED_FILES.some((f: string) => filename.endsWith(f))
+      !filename ||
+      !(filename.endsWith(".ts") || filename.endsWith(".tsx")) ||
+      GENERATED_FILES.some((f: string) => filename.endsWith(f))
     ) {
-      console.log(`\nChanged: ${filename}`);
-
-      build();
+      return;
     }
+
+    if (debounce) {
+      clearTimeout(debounce);
+    }
+
+    debounce = setTimeout(async () => {
+      debounce = null;
+
+      if (building) {
+        pending = true;
+        return;
+      }
+
+      building = true;
+
+      try {
+        do {
+          pending = false;
+          console.log(`\nRebuilding...`);
+          await build();
+        } while (pending);
+      } catch (err) {
+        console.error("Build failed:", err);
+      } finally {
+        building = false;
+      }
+    }, 100);
   });
 }
