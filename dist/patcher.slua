@@ -20,8 +20,12 @@ Patch protocol (COMM_CHANNEL):
   5. Bootstrap clears pin, confirms with "ready"
   6. Patcher derezzes object back to inventory
 
+@version 0.1.0
 @link https://github.com/gwigz/slua-derez-patcher
 ]]
+
+--- Inventory name of the bootstrap script for auto-upgrade.
+local BOOTSTRAP_NAME = "bootstrap"
 
 --- Owner chat channel for commands (patcher only).
 local CMD_CHANNEL = 7
@@ -404,26 +408,30 @@ local function stopParticles()
   ll.ParticleSystem({})
 end
 
+--- Disconnected page shown when the capability URL dies. Function (not const) so jsx-inline treats it as a templateFn evaluated before pageShell.
+local function disconnectedHtml()
+  return '<article empty=""><i data-lucide="wifi-off" color="destructive"></i><h2>Disconnected</h2><b>The connection has been lost, you can close this page</b></article>'
+end
+
 local function pageShell(baseUrl, objectName)
   return (
     (
       (
-        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" data-theme="dark"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><base href="'
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><base href="'
         .. baseUrl
       ) .. '/"/><title>'
     ) .. objectName
   )
-    .. '</title><link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 100 100&quot;&gt;&lt;text y=&quot;.9em&quot; font-size=&quot;90&quot;&gt;🎯&lt;/text&gt;&lt;/svg&gt;"/><link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css"/><script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script><script>/*<![CDATA[*/document.addEventListener("alpine:init",()=>{Alpine.data("patcher",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll("input[name=item]")],t=[...this.$root.querySelectorAll(".d input[type=checkbox]")],c=[...this.$root.querySelectorAll("details")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(".i")].find(t=>t.querySelector(".m").textContent===e);if(!t)return;const c=[...t.querySelectorAll("input[name=item]")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(".d input[type=checkbox]").forEach(e=>{const t=[...e.closest(".i").querySelectorAll("input[name=item]")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll("input[name=item]:checked")].map(e=>e.value);const e=this.$root.querySelectorAll("input[name=item]");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script><style>b{font-weight:inherit}button[destructive]{background:var(--destructive)}body{max-width:580px;padding:1.5rem 1rem}input[type=checkbox]{margin:0;flex-shrink:0}h2{margin:0 0 1rem}.k,.d,.f,.o{display:flex;align-items:center;gap:.5rem}.f label,.o label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--muted-foreground)}.o label{font-size:.8rem}.o{flex-wrap:wrap;margin-bottom:.75rem}.o [type=submit],.o button{font-size:.75rem;padding:.4rem .75rem;margin:0;white-space:nowrap}.o svg{width:14px;height:14px;vertical-align:-2px}.l{margin-bottom:1rem}.i{background:var(--card)}details{padding:0;overflow:hidden}summary{list-style:none}summary::marker{display:none;content:none}summary::-webkit-details-marker{display:none}.d{padding:.6rem .75rem;user-select:none}.d:hover{background:var(--accent)}.n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.h,.m{flex:1}.m{font-size:.85rem;font-weight:600}.e{color:var(--muted-foreground);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .e{transform:rotate(90deg)}kbd{font-size:.65rem;font-weight:600;text-transform:uppercase}.j{border-top:var(--border);background:var(--secondary)}.k{padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;border-bottom:var(--border)}.k:last-child{border-bottom:none}.c{text-align:center;padding:2rem 1rem;color:var(--muted-foreground)}#c{font-size:.8rem;flex-direction:column;align-items:stretch}#c>b{font-weight:600}.g{margin-top:.5rem;max-height:160px;overflow-y:auto}.g p{margin:0;padding:.1rem 0;color:var(--muted-foreground);font-size:.7rem;font-family:ui-monospace,monospace;line-height:1.3}.g p:last-child{color:var(--foreground)}.p{margin-bottom:.75rem;background:var(--card);padding:0;overflow:hidden}.b{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding:.4rem .75rem;border-bottom:var(--border)}.f{font-size:.8rem;padding:.5rem .75rem}.a{margin-left:auto!important}.a input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center;border:var(--border);border-radius:var(--radius);background:var(--background);color:var(--foreground)}dialog{max-width:400px;width:90vw}dialog footer{display:flex;gap:.5rem;justify-content:flex-end}</style></head><body><main hx-get="app" hx-trigger="load"><article aria-busy="spinner" style="text-align:center"></article></main><script>/*<![CDATA[*/document.addEventListener("htmx:load",e=>{lucide.createIcons(),window.Alpine&&Alpine.initTree(e.target)})/*]]>*/</script><script defer="" src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script></body></html>'
+    .. '</title><link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 100 100&quot;&gt;&lt;text y=&quot;.9em&quot; font-size=&quot;90&quot;&gt;🧩&lt;/text&gt;&lt;/svg&gt;"/><link rel="stylesheet" href="//unpkg.com/@gwigz/slick-css@1.0.0/dist/slick-static.min.css"/><script src="//unpkg.com/htmx.org@2.0.8/dist/htmx.min.js"></script><script>/*<![CDATA[*/document.addEventListener("alpine:init",()=>{Alpine.data("patcher",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll("input[name=item]")],t=[...this.$root.querySelectorAll(".a input[type=checkbox]")],c=[...this.$root.querySelectorAll("details")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(".b")].find(t=>t.querySelector(".d").textContent===e);if(!t)return;const c=[...t.querySelectorAll("input[name=item]")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(".a input[type=checkbox]").forEach(e=>{const t=[...e.closest(".b").querySelectorAll("input[name=item]")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll("input[name=item]:checked")].map(e=>e.value);const e=this.$root.querySelectorAll("input[name=item]");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src="//unpkg.com/lucide@0.577/dist/umd/lucide.min.js"></script><style>form{display:contents}.b:last-child{border-bottom:none}.c{padding:.35rem .75rem .35rem 2.25rem}article>header{font-weight:600}#c{flex-direction:column;align-items:stretch}</style></head><body><main sm="" hx-get="app" hx-trigger="load" stack=""><article aria-busy="true" align="center"></article></main><script>/*<![CDATA[*/!function(){const e=globalThis;function n(){document.removeEventListener("htmx:sendError",n),document.removeEventListener("htmx:responseError",n),document.querySelector("main").innerHTML=\'<article empty=""><i data-lucide="wifi-off" color="destructive"></i><h2>Disconnected</h2><b>The connection has been lost, you can close this page</b></article>\',e.lucide.createIcons()}document.addEventListener("htmx:load",n=>{e.lucide.createIcons(),e.Alpine&&e.Alpine.initTree(n.target)}),document.addEventListener("htmx:sendError",n),document.addEventListener("htmx:responseError",n)}()/*]]>*/</script><script defer="" src="//unpkg.com/alpinejs@3.15.8/dist/cdn.min.js"></script></body></html>'
 end
 
-local function appFragment(objectName)
-  return ("<h2>" .. objectName)
-    .. '</h2><hr/><form x-data="patcher"><div class="o"><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b style="flex:1"></b><button type="submit" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" secondary hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><div id="b" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="spinner" style="text-align:center"></article></div></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article class="p"><div class="b">Status</div><div id="c" class="f">Ready</div></article><b style="display:block;text-align:center;padding:.5rem 0" x-data="{ confirm: \'\' }"><button type="button" style="font-size:.72rem;color:var(--destructive);padding:.25rem .6rem" secondary x-on:click="$refs.fd.showModal()">Remove patcher scripts…</button><dialog x-ref="fd" style="text-align:left"><h3 style="margin:0 0 .75rem">Remove patcher scripts?</h3><p>This will remove the bootstrap script from every target object, then delete the patcher script.</p><p style="margin-bottom:.25rem;color:var(--foreground);font-weight:600;font-size:.78rem">Type FINISH to confirm</p><input type="text" x-model="confirm" placeholder="FINISH" autocomplete="off" style="width:100%"/><footer><button type="button" secondary x-on:click="confirm=\'\';$refs.fd.close()">Cancel</button><button type="button" hx-post="finish" hx-target="#c" destructive x-bind:disabled="confirm !== \'FINISH\'" x-on:click="confirm=\'\';$refs.fd.close()">Confirm</button></footer></dialog></b>'
+local function appFragment()
+  return '<form x-data="patcher"><div row=""><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b spacer=""></b><button type="submit" sm="" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" sm="" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" sm="" secondary="" hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><article id="b" flush="" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="true" align="center"></article></article></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article flush=""><header>Status</header><div id="c" row="">Ready</div></article><div align="center" x-data="{ confirmText: \'\' }"><button type="button" sm="" destructive="" x-on:click="$refs.fd.showModal()">Remove patcher scripts…</button><dialog align="left" x-ref="fd"><header><h3>Remove patcher scripts?</h3><p>This will remove the bootstrap script from every target object, then delete the patcher script.</p></header><div stack="xs"><label for="confirmText">Type FINISH to confirm</label><input type="text" id="confirmText" x-model="confirmText" placeholder="FINISH" autocomplete="off"/></div><footer><button type="button" secondary="" x-on:click="confirmText=\'\';$refs.fd.close()">Cancel</button><button type="button" hx-post="finish" hx-target="#c" destructive="" x-bind:disabled="confirmText.toUpperCase() !== \'FINISH\'" x-on:click="confirmText=\'\';$refs.fd.close()">Confirm</button></footer></dialog></div>'
 end
 
-local EMPTY_STATE = '<div class="c">No patchable objects found in inventory.</div>'
+local EMPTY_STATE = '<article empty=""><b>No patchable objects found in inventory.</b></article>'
 
-local POLL_TRIGGER = '<div hx-get="poll" hx-trigger="load" hx-target="#c"></div>'
+local POLL_TRIGGER = '<div style="display:none" hx-get="poll" hx-trigger="load" hx-target="#c"></div>'
 
 --- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(s)
@@ -448,12 +456,12 @@ local function buildItemRow(fullItemName)
         (
           (
             (
-              ('<label class="k"><input type="checkbox" name="item" value="' .. escaped)
-              .. '" x-on:change="sync()"/><b class="h n" tooltip-top="'
+              ('<label class="c" row=""><input type="checkbox" name="item" value="' .. escaped)
+              .. '" x-on:change="sync()"/><b spacer="" truncate="" tooltip-top="'
             ) .. itemName
           ) .. '">'
         ) .. itemName
-      ) .. "</b><kbd secondary>"
+      ) .. '</b><kbd outline="">'
     ) .. typeLabel
   ) .. "</kbd></label>"
 end
@@ -482,7 +490,7 @@ local function buildObjectList(selfName)
       end
 
       html = html
-        .. ((((((('<details class="i"><summary><div class="d"><b class="e">&#9654;</b><input type="checkbox" x-on:click.stop="' .. ("toggleObject('" .. escaped) .. "')") .. '"/><b class="m n" tooltip-top="') .. escaped) .. '">') .. escaped) .. '</b></div></summary><div class="j">') .. itemsHtml)
+        .. ((((((('<details class="b" left=""><summary><div class="a" row="" spacer=""><input type="checkbox" x-on:click.stop="' .. ("toggleObject('" .. escaped) .. "')") .. '"/><strong class="d" spacer="" truncate="" tooltip-top="') .. escaped) .. '">') .. escaped) .. "</strong></div></summary><div>") .. itemsHtml)
         .. "</div></details>"
     end
   end
@@ -506,16 +514,18 @@ local function buildStatusFragment(busy, index, total, log, autoUpdate)
 
   if busy then
     html = html
-      .. ((((((("<b>Patching " .. tostring(index)) .. "/") .. tostring(total)) .. '</b><progress value="') .. tostring(
+      .. ((((((("<strong>Patching " .. tostring(index)) .. "/") .. tostring(total)) .. '</strong><progress value="') .. tostring(
         index
       )) .. '" max="') .. tostring(total))
       .. '"></progress>'
   elseif total > 0 then
     html = html
-      .. ((('<b>Done</b><progress value="' .. tostring(total)) .. '" max="') .. tostring(total))
+      .. ((((("" .. "<strong>Done</strong>") .. '<progress value="') .. tostring(total)) .. '" max="') .. tostring(
+        total
+      ))
       .. '"></progress>'
   else
-    html = html .. "<b>Done</b>"
+    html = html .. "<strong>Done</strong>"
   end
 
   if #log > 0 then
@@ -525,7 +535,7 @@ local function buildStatusFragment(busy, index, total, log, autoUpdate)
       logHtml = logHtml .. ("<p>" .. escapeHtml(entry)) .. "</p>"
     end
 
-    html = html .. ('<div class="g">' .. logHtml) .. "</div>"
+    html = html .. ("<samp>" .. logHtml) .. "</samp>"
   end
 
   if busy or autoUpdate then
@@ -638,28 +648,27 @@ end
 
 --- Goodbye message shown after cleanup finishes. OOB swap replaces `<main>` content.
 local GOODBYE_FRAGMENT =
-  '<main hx-swap-oob="innerHTML:main"><article style="text-align:center;padding:2rem 1rem;text-wrap:balance"><i data-lucide="circle-check" style="width:2.5rem;height:2.5rem;color:#22c55e;margin-bottom:.5rem"></i><h2>All done!</h2><b style="color:var(--muted-foreground)">Bootstrap scripts have been removed from your objects, you can close this page</b></article></main>'
+  '<main hx-swap-oob="innerHTML:main"><article empty=""><i data-lucide="circle-check" color="success"></i><h2>All done!</h2><b>Bootstrap scripts have been removed from your objects, you can close this page</b></article></main>'
 
 --- Builds the autoupdate controls reflecting current server state.
 -- Returned for GET /autoupdate and POST /autoupdate.
 local function buildAutoUpdateControls(enabled, debounce)
-  if enabled then
-    return (
+  local html = (
+    (
       (
-        (
-          '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" checked="" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
-          .. tostring(debounce)
-        )
-        .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div>'
-      ) .. POLL_TRIGGER
-    ) .. "</article>"
-  end
-
-  return (
-    '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
-    .. tostring(debounce)
+        '<article flush=""><header>Settings</header><div row=""><label spacer=""><input type="checkbox" name="enabled"'
+        .. if enabled then ' checked=""' else ""
+      )
+      .. ' hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label>Delay <input type="number" sm="" style="width:3.5rem" name="debounce" value="'
+    ) .. tostring(debounce)
   )
     .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div></article>'
+
+  if enabled then
+    html = html .. POLL_TRIGGER
+  end
+
+  return html
 end
 
 -- Lua Library inline imports
@@ -678,7 +687,7 @@ local function __TS__ArrayFilter(self, callbackfn, thisArg)
 end
 
 -- End of Lua Library inline imports
-local logStatus, pushStatus, statusFragment, respondPoll, generateSignedPin, rezWithSignedPin, scheduleSelfDelete, loadNextScript, patchNext, startPatching, onAllPinned, verifyDerez, finishCleanup, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, busy, finishing, cleanupObjects, cleanupPinnedCount, cleanupTimer, goodbyePending, currentPin, timeoutTimer, pendingScripts, pendingItems, pendingScriptIdx, pendingItemIdx, scriptLoadTimer, pollRequestId, pollTimer, statusLog
+local logStatus, pushStatus, statusFragment, respondPoll, generateSignedPin, rezWithSignedPin, scheduleSelfDelete, loadNextScript, patchNext, startPatching, onAllPinned, verifyDerez, finishCleanup, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, bootstrapUpgraded, busy, finishing, cleanupObjects, cleanupPinnedCount, cleanupTimer, goodbyePending, currentPin, timeoutTimer, pendingScripts, pendingItems, pendingScriptIdx, pendingItemIdx, scriptLoadTimer, pollRequestId, pollTimer, statusLog
 local setupAutoUpdate = setup
 local isAutoUpdateEnabled = isEnabled
 local enableAutoUpdate = enable
@@ -798,12 +807,28 @@ function patchNext()
     end
 
     clearStatus()
-    pushStatus("All objects patched.")
+
+    if completedItems >= totalItems then
+      pushStatus("All objects patched.")
+    elseif completedItems == 0 then
+      pushStatus("Patching failed. All transfers timed out.")
+    else
+      pushStatus(
+        ((("Patching complete. " .. tostring(completedItems)) .. "/") .. tostring(totalItems))
+          .. " item(s) transferred."
+      )
+    end
 
     return
   end
 
-  currentObjectName = patchQueue[queueIndex + 1]
+  local nextName = patchQueue[queueIndex + 1]
+
+  if nextName ~= currentObjectName then
+    bootstrapUpgraded = false
+  end
+
+  currentObjectName = nextName
   queueIndex = queueIndex + 1
 
   local ____getItemsForObject_result_1 = getItemsForObject(SELF_NAME, currentObjectName)
@@ -863,8 +888,12 @@ function patchNext()
       scriptLoadTimer = nil
     end
 
+    local skipped = #pendingItems - pendingItemIdx + (#pendingScripts - pendingScriptIdx)
+
     pendingItemIdx = #pendingItems
-    pushStatus(("Timeout waiting for " .. currentObjectName) .. ", derezing.")
+    pushStatus(
+      ((("Timeout waiting for " .. currentObjectName) .. " (") .. tostring(skipped)) .. " item(s) skipped), derezing."
+    )
     ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
     timeoutTimer = nil
     patchNext()
@@ -880,6 +909,7 @@ function startPatching(queue, itemFilter, resetLog)
   patchItemFilter = itemFilter or {}
   queueIndex = 0
   completedItems = 0
+  bootstrapUpgraded = false
   busy = true
   totalItems = 0
 
@@ -993,6 +1023,7 @@ patchItemFilter = {}
 queueIndex = 0
 totalItems = 0
 completedItems = 0
+bootstrapUpgraded = false
 busy = false
 finishing = false
 cleanupObjects = {}
@@ -1132,7 +1163,7 @@ LLEvents:on("http_request", function(requestId, method, body)
     if url == "" or url == "/" then
       respondHtml(requestId, pageShell(httpUrl, ll.GetObjectName()))
     elseif url == "/app" then
-      respondHtml(requestId, appFragment(ll.GetObjectName()))
+      respondHtml(requestId, appFragment())
     elseif url == "/objects" then
       respondHtml(requestId, buildObjectList(SELF_NAME))
     elseif url == "/poll" then
@@ -1146,16 +1177,16 @@ LLEvents:on("http_request", function(requestId, method, body)
       end
 
       if pollRequestId ~= "" then
-        respondHtml(pollRequestId, statusFragment())
+        respondHtml(pollRequestId, buildStatusFragment(busy or finishing, completedItems, totalItems, statusLog))
+
+        if pollTimer then
+          LLTimers:off(pollTimer)
+          pollTimer = nil
+        end
       end
 
       pollRequestId = requestId
-
-      if pollTimer then
-        LLTimers:off(pollTimer)
-      end
-
-      pollTimer = LLTimers:once(20, function()
+      pollTimer = LLTimers:once(25, function()
         pollTimer = nil
         respondPoll()
       end)
@@ -1177,7 +1208,7 @@ LLEvents:on("http_request", function(requestId, method, body)
       local filter = ____parseFormItems_result_4.filter
 
       if #queue == 0 then
-        respondHtml(requestId, "<b>No items selected</b>")
+        respondHtml(requestId, "<strong>No items selected</strong>")
 
         return
       end
@@ -1220,13 +1251,21 @@ LLEvents:on("http_request", function(requestId, method, body)
 
       respondHtml(requestId, statusFragment())
     elseif url == "/autoupdate" then
-      if parseFormValue(body, "enabled") == "on" then
+      local enabling = parseFormValue(body, "enabled") == "on"
+
+      if enabling then
         enableAutoUpdate()
       else
         disableAutoUpdate()
       end
 
-      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()))
+      local html = buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds())
+
+      if pollRequestId ~= "" then
+        respondPoll()
+      end
+
+      respondHtml(requestId, html)
     elseif url == "/autoupdate-debounce" then
       local seconds = tonumber(parseFormValue(body, "debounce") or "")
 
@@ -1277,7 +1316,7 @@ LLEvents:on("listen", function(channel, _name, id, message)
       end
     end
   elseif channel == COMM_CHANNEL and busy then
-    if message == "pinned" and finishing then
+    if (message == "pinned" or string.find(message, "pinned|", 1, true) == 1) and finishing then
       local entry = findCleanupEntry(id)
 
       if entry and not entry.pinned then
@@ -1292,10 +1331,46 @@ LLEvents:on("listen", function(channel, _name, id, message)
           onAllPinned()
         end
       end
-    elseif message == "pinned" and id == currentObjectId and not finishing then
-      startParticles(currentObjectId)
-      pendingItemIdx = 0
-      giveNextItem()
+    elseif
+      (message == "pinned" or string.find(message, "pinned|", 1, true) == 1)
+      and id == currentObjectId
+      and not finishing
+    then
+      if message == "pinned" then
+        if timeoutTimer then
+          LLTimers:off(timeoutTimer)
+          timeoutTimer = nil
+        end
+
+        local hasBootstrap = ll.GetInventoryType(BOOTSTRAP_NAME) == INVENTORY_SCRIPT
+
+        if not bootstrapUpgraded and hasBootstrap then
+          bootstrapUpgraded = true
+          pushStatus(("Upgrading bootstrap in " .. currentObjectName) .. "...")
+
+          ll.RemoteLoadScriptPin(currentObjectId, BOOTSTRAP_NAME, currentPin, 1, 0)
+          ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
+          queueIndex = queueIndex - 1
+
+          LLTimers:once(1, function()
+            return patchNext()
+          end)
+        else
+          local hint = if not hasBootstrap then ' Add "bootstrap" script to auto-upgrade.' else ""
+
+          pushStatus((("Outdated bootstrap in " .. currentObjectName) .. ", skipping.") .. hint)
+          ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
+          patchNext()
+        end
+      else
+        if bootstrapUpgraded then
+          pushStatus(("Bootstrap upgraded in " .. currentObjectName) .. ".")
+        end
+
+        startParticles(currentObjectId)
+        pendingItemIdx = 0
+        giveNextItem()
+      end
     elseif message == "removed" and id == currentObjectId and not finishing and pendingItemIdx < #pendingItems then
       local item = pendingItems[pendingItemIdx + 1]
 

@@ -8,6 +8,7 @@ signals "pinned" to the patcher. After all items and scripts have been
 transferred, it clears the pin and replies "ready" so the patcher can
 derez the object back to inventory.
 
+@version 0.1.0
 @link https://github.com/gwigz/slua-derez-patcher
 ]]
 
@@ -16,6 +17,9 @@ local COMM_CHANNEL = -47123
 
 --- Shared secret for signing dynamic script access pins.
 local SECRET = "slua-derez-patcher"
+
+--- Protocol version, included in the "pinned" handshake.
+local VERSION = "v0.1.0"
 
 --[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 --- Active listen handle, or 0 when not listening.
@@ -59,7 +63,7 @@ LLEvents:on("on_rez", function()
   end
 
   listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
-  ll.RegionSay(COMM_CHANNEL, "pinned")
+  ll.RegionSay(COMM_CHANNEL, "pinned|" .. VERSION)
 end)
 
 LLEvents:on("listen", function(channel, name, id, message)
@@ -90,7 +94,10 @@ LLEvents:on("listen", function(channel, name, id, message)
   elseif string.find(message, "remove|", 1, true) == 1 then
     local itemName = string.sub(message, 8)
 
-    ll.RemoveInventory(itemName)
+    if ll.GetInventoryType(itemName) ~= INVENTORY_NONE then
+      ll.RemoveInventory(itemName)
+    end
+
     ll.RegionSayTo(id, COMM_CHANNEL, "removed")
   elseif message == "cleanup" then
     ll.SetRemoteScriptAccessPin(0)
