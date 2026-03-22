@@ -91,7 +91,7 @@ Scripts have a 3 second delay between each load (`ll.RemoteLoadScriptPin` is thr
 ├── build.ts                  Build script (template compilation + TSTL)
 ├── src/
 │   ├── bootstrap.ts          Standalone bootstrap script
-│   ├── constants.ts          Shared constants (PIN, channels)
+│   ├── constants.ts          Shared constants (secret, channels)
 │   └── patcher/
 │       ├── index.ts          Entry point, HTTP-in routing, state, patch flow
 │       ├── ui.tsx             HTML fragment builders, form parser

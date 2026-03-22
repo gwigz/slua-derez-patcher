@@ -13,11 +13,12 @@ it in a browser to access the web UI, or use chat commands on channel 7:
   /7 auto <n>  - enable auto-update with <n> second debounce
 
 Patch protocol (COMM_CHANNEL):
-  1. Patcher rezzes object with PIN as start param
-  2. Bootstrap sets pin, sends "pinned"
-  3. Patcher transfers items and scripts, sends "done"
-  4. Bootstrap confirms with "ready"
-  5. Patcher derezzes object back to inventory
+  1. Patcher generates random pin, signs it with ComputeHash
+  2. Patcher rezzes object with "pin|hash" as REZ_PARAM_STRING
+  3. Bootstrap verifies hash, sets pin, sends "pinned"
+  4. Patcher transfers items and scripts, sends "done"
+  5. Bootstrap clears pin, confirms with "ready"
+  6. Patcher derezzes object back to inventory
 
 @link https://github.com/gwigz/slua-derez-patcher
 ]]
@@ -28,8 +29,8 @@ local CMD_CHANNEL = 7
 --- Internal channel for patcher/bootstrap protocol messages.
 local COMM_CHANNEL = -47123
 
---- Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`.
-local PIN = 87654321
+--- Shared secret for signing dynamic script access pins.
+local SECRET = "slua-derez-patcher"
 
 --[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 
@@ -412,18 +413,17 @@ local function pageShell(baseUrl, objectName)
       ) .. '/"/><title>'
     ) .. objectName
   )
-    .. '</title><link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 100 100&quot;&gt;&lt;text y=&quot;.9em&quot; font-size=&quot;90&quot;&gt;🎯&lt;/text&gt;&lt;/svg&gt;"/><link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css"/><script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script><script>/*<![CDATA[*/document.addEventListener("alpine:init",()=>{Alpine.data("patcher",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll("input[name=item]")],t=[...this.$root.querySelectorAll(".d input[type=checkbox]")],c=[...this.$root.querySelectorAll("details")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(".i")].find(t=>t.querySelector(".m").textContent===e);if(!t)return;const c=[...t.querySelectorAll("input[name=item]")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(".d input[type=checkbox]").forEach(e=>{const t=[...e.closest(".i").querySelectorAll("input[name=item]")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll("input[name=item]:checked")].map(e=>e.value);const e=this.$root.querySelectorAll("input[name=item]");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script><style>b{font-weight:inherit}body{max-width:580px;padding:1.5rem 1rem}input[type=checkbox]{margin:0;flex-shrink:0}h2{margin:0 0 1rem}.k,.d,.f,.o{display:flex;align-items:center;gap:.5rem}.f label,.o label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--muted-foreground)}.o label{font-size:.8rem}.o{flex-wrap:wrap;margin-bottom:.75rem}.o [type=submit],.o button{font-size:.75rem;padding:.4rem .75rem;margin:0;white-space:nowrap}.o svg{width:14px;height:14px;vertical-align:-2px}.l{margin-bottom:1rem}.i{background:var(--card)}details{padding:0;overflow:hidden}summary{list-style:none}summary::marker{display:none;content:none}summary::-webkit-details-marker{display:none}.d{padding:.6rem .75rem;user-select:none}.d:hover{background:var(--accent)}.n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.h,.m{flex:1}.m{font-size:.85rem;font-weight:600}.e{color:var(--muted-foreground);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .e{transform:rotate(90deg)}kbd{font-size:.65rem;font-weight:600;text-transform:uppercase}.j{border-top:var(--border);background:var(--secondary)}.k{padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;border-bottom:var(--border)}.k:last-child{border-bottom:none}.c{text-align:center;padding:2rem 1rem;color:var(--muted-foreground)}#c{font-size:.8rem;flex-direction:column;align-items:stretch}#c>b{font-weight:600}.g{margin-top:.5rem;max-height:160px;overflow-y:auto}.g p{margin:0;padding:.1rem 0;color:var(--muted-foreground);font-size:.7rem;font-family:ui-monospace,monospace;line-height:1.3}.g p:last-child{color:var(--foreground)}.p{margin-bottom:.75rem;background:var(--card);padding:0;overflow:hidden}.b{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding:.4rem .75rem;border-bottom:var(--border)}.f{font-size:.8rem;padding:.5rem .75rem}.a{margin-left:auto!important}.a input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center;border:var(--border);border-radius:var(--radius);background:var(--background);color:var(--foreground)}</style></head><body><main hx-get="app" hx-trigger="load"><article aria-busy="spinner" style="text-align:center"></article></main><script>/*<![CDATA[*/document.addEventListener("htmx:load",e=>{lucide.createIcons(),window.Alpine&&Alpine.initTree(e.target)})/*]]>*/</script><script defer="" src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script></body></html>'
+    .. '</title><link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot; viewBox=&quot;0 0 100 100&quot;&gt;&lt;text y=&quot;.9em&quot; font-size=&quot;90&quot;&gt;🎯&lt;/text&gt;&lt;/svg&gt;"/><link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css"/><script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script><script>/*<![CDATA[*/document.addEventListener("alpine:init",()=>{Alpine.data("patcher",function(){return{items:[],allChecked:!1,toggleAll(){const e=[...this.$root.querySelectorAll("input[name=item]")],t=[...this.$root.querySelectorAll(".f input[type=checkbox]")],c=[...this.$root.querySelectorAll("details")];this.allChecked?(this.items=[],e.forEach(e=>e.checked=!1),t.forEach(e=>e.checked=!1),c.forEach(e=>e.open=!1)):(this.items=e.map(e=>(e.checked=!0,e.value)),t.forEach(e=>e.checked=!0),c.forEach(e=>e.open=!0)),this.allChecked=!this.allChecked},toggleObject(e){const t=[...this.$root.querySelectorAll(".k")].find(t=>t.querySelector(".o").textContent===e);if(!t)return;const c=[...t.querySelectorAll("input[name=item]")],o=c.every(e=>e.checked);c.forEach(e=>e.checked=!o),t.open=!0,this.sync()},updateObjBoxes(){this.$root.querySelectorAll(".f input[type=checkbox]").forEach(e=>{const t=[...e.closest(".k").querySelectorAll("input[name=item]")],c=t.filter(e=>e.checked).length,o=t.length;e.checked=o>0&&c===o,e.indeterminate=c>0&&c<o})},sync(){this.items=[...this.$root.querySelectorAll("input[name=item]:checked")].map(e=>e.value);const e=this.$root.querySelectorAll("input[name=item]");this.allChecked=this.items.length>0&&this.items.length===e.length,this.updateObjBoxes()}}})})/*]]>*/</script><script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script><style>b{font-weight:inherit}body{max-width:580px;padding:1.5rem 1rem}input[type=checkbox]{margin:0;flex-shrink:0}h2{margin:0 0 1rem}.m,.f,.h,.q{display:flex;align-items:center;gap:.5rem}.h label,.q label{display:flex;align-items:center;gap:.4rem;margin:0;cursor:pointer;color:var(--muted-foreground)}.q label{font-size:.8rem}.q{flex-wrap:wrap;margin-bottom:.75rem}.q [type=submit],.q button{font-size:.75rem;padding:.4rem .75rem;margin:0;white-space:nowrap}.q svg{width:14px;height:14px;vertical-align:-2px}.n{margin-bottom:1rem}.k{background:var(--card)}details{padding:0;overflow:hidden}summary{list-style:none}summary::marker{display:none;content:none}summary::-webkit-details-marker{display:none}.f{padding:.6rem .75rem;user-select:none}.f:hover{background:var(--accent)}.p{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.j,.o{flex:1}.o{font-size:.85rem;font-weight:600}.g{color:var(--muted-foreground);font-size:.7rem;flex-shrink:0;width:1rem;text-align:center;transition:transform .15s}details[open]>summary .g{transform:rotate(90deg)}kbd{font-size:.65rem;font-weight:600;text-transform:uppercase}.l{border-top:var(--border);background:var(--secondary)}.m{padding:.35rem .75rem .35rem 2.25rem;font-size:.78rem;border-bottom:var(--border)}.m:last-child{border-bottom:none}.e{text-align:center;padding:2rem 1rem;color:var(--muted-foreground)}#c{font-size:.8rem;flex-direction:column;align-items:stretch}#c>b{font-weight:600}.i{margin-top:.5rem;max-height:160px;overflow-y:auto}.i p{margin:0;padding:.1rem 0;color:var(--muted-foreground);font-size:.7rem;font-family:ui-monospace,monospace;line-height:1.3}.i p:last-child{color:var(--foreground)}.r{margin-bottom:.75rem;background:var(--card);padding:0;overflow:hidden}.c{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding:.4rem .75rem;border-bottom:var(--border)}.h{font-size:.8rem;padding:.5rem .75rem}.a{margin-left:auto!important}.a input[type=number]{width:3.5rem;font-size:.75rem;padding:.2rem .4rem;margin:0;text-align:center;border:var(--border);border-radius:var(--radius);background:var(--background);color:var(--foreground)}.d{border-color:var(--destructive)}.d .c{color:var(--destructive)}.d p{font-size:.78rem;margin:0 0 .5rem;color:var(--muted-foreground)}.d button{font-size:.75rem;padding:.4rem .75rem}dialog{max-width:400px;width:90vw}dialog::backdrop{background:rgba(0,0,0,.6)}dialog p{font-size:.82rem;color:var(--muted-foreground)}dialog .b{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}dialog input[type=text]{width:100%;font-size:.82rem;margin-top:.5rem}</style></head><body><main hx-get="app" hx-trigger="load"><article aria-busy="spinner" style="text-align:center"></article></main><script>/*<![CDATA[*/document.addEventListener("htmx:load",e=>{lucide.createIcons(),window.Alpine&&Alpine.initTree(e.target)})/*]]>*/</script><script defer="" src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script></body></html>'
 end
 
 local function appFragment(objectName)
   return ("<h2>" .. objectName)
-    .. '</h2><hr/><form x-data="patcher"><div class="o"><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b style="flex:1"></b><button type="submit" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" class="secondary" hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><div id="b" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="spinner" style="text-align:center"></article></div></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article class="p"><div class="b">Status</div><div id="c" class="f">Ready</div></article>'
+    .. '</h2><hr/><form x-data="patcher"><div class="q"><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b style="flex:1"></b><button type="submit" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" class="secondary" hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><div id="b" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="spinner" style="text-align:center"></article></div></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article class="r d"><div class="c">Danger Zone</div><div class="h" style="flex-direction:column;align-items:stretch"><p>Remove the patcher and bootstrap scripts from all objects permanently.</p><button type="button" class="destructive" x-on:click="$refs.finishDialog.showModal()"><i data-lucide="trash-2"></i> Finish</button></div></article><dialog x-data="{ confirm: \'\' }" x-ref="finishDialog"><article style="margin:0"><h3 style="margin:0 0 .75rem">Remove Everything?</h3><p>This will remove the bootstrap script from every target object, delete all patcher inventory items, and delete this script. This cannot be undone.</p><p>Make sure you have a backup of your scripts before continuing.</p><p style="margin-bottom:.25rem;color:var(--foreground);font-weight:600;font-size:.78rem">Type FINISH to confirm:</p><input type="text" x-model="confirm" placeholder="FINISH" autocomplete="off"/><div class="b"><button type="button" class="secondary" x-on:click="confirm=\'\';$refs.finishDialog.close()">Cancel</button><button type="button" class="destructive" hx-post="finish" hx-target="#c" x-bind:disabled="confirm !== \'FINISH\'" x-on:click="confirm=\'\';$refs.finishDialog.close()">Remove Everything</button></div></article></dialog><article class="r"><div class="c">Status</div><div id="c" class="h">Ready</div></article>'
 end
 
-local EMPTY_STATE = '<div class="c">No patchable objects found in inventory.</div>'
+local EMPTY_STATE = '<div class="e">No patchable objects found in inventory.</div>'
 
 local POLL_TRIGGER = '<div hx-get="poll" hx-trigger="load" hx-target="#c"></div>'
-local NO_ITEMS_SELECTED = "<b>No items selected</b>"
 
 --- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(s)
@@ -448,8 +448,8 @@ local function buildItemRow(fullItemName)
         (
           (
             (
-              ('<label class="k"><input type="checkbox" name="item" value="' .. escaped)
-              .. '" x-on:change="sync()"/><b class="h n" tooltip-top="'
+              ('<label class="m"><input type="checkbox" name="item" value="' .. escaped)
+              .. '" x-on:change="sync()"/><b class="j p" tooltip-top="'
             ) .. itemName
           ) .. '">'
         ) .. itemName
@@ -482,7 +482,7 @@ local function buildObjectList(selfName)
       end
 
       html = html
-        .. ((((((('<details class="i"><summary><div class="d"><b class="e">&#9654;</b><input type="checkbox" x-on:click.stop="' .. ("toggleObject('" .. escaped) .. "')") .. '"/><b class="m n" tooltip-top="') .. escaped) .. '">') .. escaped) .. '</b></div></summary><div class="j">') .. itemsHtml)
+        .. ((((((('<details class="k"><summary><div class="f"><b class="g">&#9654;</b><input type="checkbox" x-on:click.stop="' .. ("toggleObject('" .. escaped) .. "')") .. '"/><b class="o p" tooltip-top="') .. escaped) .. '">') .. escaped) .. '</b></div></summary><div class="l">') .. itemsHtml)
         .. "</div></details>"
     end
   end
@@ -525,7 +525,7 @@ local function buildStatusFragment(busy, index, total, log, autoUpdate)
       logHtml = logHtml .. ("<p>" .. escapeHtml(entry)) .. "</p>"
     end
 
-    html = html .. ('<div class="g">' .. logHtml) .. "</div>"
+    html = html .. ('<div class="i">' .. logHtml) .. "</div>"
   end
 
   if busy or autoUpdate then
@@ -636,6 +636,10 @@ local function parseFormItems(body)
   return { queue = queue, filter = filter }
 end
 
+--- Goodbye message shown after cleanup finishes. OOB swap replaces `<main>` content.
+local GOODBYE_FRAGMENT =
+  '<main hx-swap-oob="innerHTML"><article style="text-align:center;padding:2rem 1rem"><h2>All done!</h2><p style="color:var(--muted-foreground)">All scripts and inventory items have been removed. You can close this page.</p></article></main>'
+
 --- Builds the autoupdate controls reflecting current server state.
 -- Returned for GET /autoupdate and POST /autoupdate.
 local function buildAutoUpdateControls(enabled, debounce)
@@ -643,7 +647,7 @@ local function buildAutoUpdateControls(enabled, debounce)
     return (
       (
         (
-          '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" checked="" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
+          '<article class="r"><div class="c">Settings</div><div class="h"><label><input type="checkbox" name="enabled" checked="" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
           .. tostring(debounce)
         )
         .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div>'
@@ -652,7 +656,7 @@ local function buildAutoUpdateControls(enabled, debounce)
   end
 
   return (
-    '<article class="p"><div class="b">Settings</div><div class="f"><label><input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
+    '<article class="r"><div class="c">Settings</div><div class="h"><label><input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#a"/> Auto-update</label><label class="a">Delay <input type="number" name="debounce" value="'
     .. tostring(debounce)
   )
     .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div></article>'
@@ -674,7 +678,7 @@ local function __TS__ArrayFilter(self, callbackfn, thisArg)
 end
 
 -- End of Lua Library inline imports
-local logStatus, pushStatus, statusFragment, respondPoll, patchNext, startPatching, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, busy, timeoutTimer, pendingScripts, pendingItems, scriptLoadTimer, pollRequestId, pollTimer, statusLog
+local logStatus, pushStatus, statusFragment, respondPoll, rezWithSignedPin, patchNext, startPatching, removeAllInventory, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, busy, finishing, currentPin, timeoutTimer, pendingScripts, pendingItems, scriptLoadTimer, pollRequestId, pollTimer, statusLog
 local setupAutoUpdate = setup
 local isAutoUpdateEnabled = isEnabled
 local enableAutoUpdate = enable
@@ -698,21 +702,41 @@ function pushStatus(message)
 end
 
 function statusFragment()
-  return buildStatusFragment(busy, completedItems, totalItems, statusLog, isAutoUpdateEnabled())
+  return buildStatusFragment(busy or finishing, completedItems, totalItems, statusLog, isAutoUpdateEnabled())
 end
 
-function respondPoll()
+function respondPoll(extraHtml)
+  if extraHtml == nil then
+    extraHtml = ""
+  end
+
   if pollRequestId == "" then
     return
   end
 
-  respondHtml(pollRequestId, statusFragment())
+  respondHtml(pollRequestId, statusFragment() .. extraHtml)
   pollRequestId = ""
 
   if pollTimer then
     LLTimers:off(pollTimer)
     pollTimer = nil
   end
+end
+
+function rezWithSignedPin(objectName)
+  currentPin = math.floor(math.random() * 2147483646) + 1
+
+  local pinStr = tostring(currentPin)
+  local signature = ll.ComputeHash((SECRET .. "|") .. pinStr, "sha256")
+
+  currentObjectId = ll.RezObjectWithParams(objectName, {
+    REZ_POS,
+    vector.create(0, 0, 1),
+    1,
+    0,
+    REZ_PARAM_STRING,
+    (pinStr .. "|") .. signature,
+  })
 end
 
 function patchNext()
@@ -785,14 +809,7 @@ function patchNext()
     ((((("Rezzing " .. currentObjectName) .. "... [") .. tostring(completedItems)) .. "/") .. tostring(totalItems))
       .. "]"
   )
-  currentObjectId = ll.RezObjectWithParams(currentObjectName, {
-    REZ_POS,
-    vector.create(0, 0, 1),
-    1,
-    0,
-    REZ_PARAM,
-    PIN,
-  })
+  rezWithSignedPin(currentObjectName)
 
   local timeoutSeconds = #pendingScripts * 3.5 + 10
 
@@ -851,6 +868,30 @@ function startPatching(queue, itemFilter, resetLog)
   patchNext()
 end
 
+function removeAllInventory()
+  pushStatus("Removing patcher inventory...")
+
+  local count = ll.GetInventoryNumber(INVENTORY_ALL)
+
+  do
+    local i = count - 1
+
+    while i >= 0 do
+      local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
+
+      if name ~= SELF_NAME then
+        ll.RemoveInventory(name)
+      end
+
+      i = i - 1
+    end
+  end
+
+  logStatus("Cleanup complete. Goodbye!")
+  respondPoll(GOODBYE_FRAGMENT)
+  ll.RemoveInventory(SELF_NAME)
+end
+
 function respondHtml(requestId, body)
   ll.SetContentType(requestId, CONTENT_TYPE_XHTML)
   ll.HTTPResponse(requestId, 200, body)
@@ -864,6 +905,15 @@ queueIndex = 0
 totalItems = 0
 completedItems = 0
 busy = false
+finishing = false
+
+--- Ordered list of object names waiting to be cleaned up.
+local cleanupQueue = {}
+
+--- Current position in the cleanup queue (0-indexed).
+local cleanupIndex = 0
+
+currentPin = 0
 timeoutTimer = nil
 pendingScripts = {}
 pendingItems = {}
@@ -902,12 +952,45 @@ local function loadNextScript()
   )
   pushStatus((("Loading " .. name) .. " into ") .. currentObjectName)
 
-  ll.RemoteLoadScriptPin(currentObjectId, script, PIN, 1, 0)
+  ll.RemoteLoadScriptPin(currentObjectId, script, currentPin, 1, 0)
   completedItems = completedItems + 1
   pendingScriptIdx = pendingScriptIdx + 1
   scriptLoadTimer = LLTimers:once(0.5, function()
     scriptLoadTimer = nil
     loadNextScript()
+  end)
+end
+
+--- Advances to the next object in the cleanup queue. Rezzes it with a signed
+-- start string, sets up a 10s timeout, and waits for the bootstrap handshake.
+-- When the queue is exhausted, calls removeAllInventory() to finish.
+local function cleanupNext()
+  if cleanupIndex >= #cleanupQueue then
+    cleanupQueue = {}
+    cleanupIndex = 0
+    clearStatus()
+    removeAllInventory()
+
+    return
+  end
+
+  currentObjectName = cleanupQueue[cleanupIndex + 1]
+  cleanupIndex = cleanupIndex + 1
+  setStatus(
+    ((((currentObjectName .. "\nCleaning up\n[") .. tostring(cleanupIndex)) .. "/") .. tostring(#cleanupQueue)) .. "]"
+  )
+  pushStatus(
+    (
+      (((("Rezzing " .. currentObjectName) .. " for cleanup... [") .. tostring(cleanupIndex)) .. "/")
+      .. tostring(#cleanupQueue)
+    ) .. "]"
+  )
+  rezWithSignedPin(currentObjectName)
+  timeoutTimer = LLTimers:once(10, function()
+    timeoutTimer = nil
+    pushStatus(("Timeout waiting for " .. currentObjectName) .. ", skipping.")
+    ll.DerezObject(currentObjectId, DEREZ_DIE)
+    cleanupNext()
   end)
 end
 
@@ -984,7 +1067,7 @@ LLEvents:on("http_request", function(requestId, method, body)
       local filter = ____parseFormItems_result_2.filter
 
       if #queue == 0 then
-        respondHtml(requestId, NO_ITEMS_SELECTED)
+        respondHtml(requestId, "<b>No items selected</b>")
 
         return
       end
@@ -1016,6 +1099,24 @@ LLEvents:on("http_request", function(requestId, method, body)
       end
 
       respondHtml(requestId, statusFragment())
+    elseif url == "/finish" then
+      if busy then
+        respondHtml(requestId, statusFragment())
+
+        return
+      end
+
+      finishing = true
+      busy = true
+      statusLog = {}
+      completedItems = 0
+      cleanupQueue = getObjectNames()
+      cleanupIndex = 0
+      totalItems = #cleanupQueue
+      pushStatus(("Cleaning up " .. tostring(#cleanupQueue)) .. " object(s)...")
+
+      respondHtml(requestId, statusFragment())
+      cleanupNext()
     elseif url == "/autoupdate" then
       if parseFormValue(body, "enabled") == "on" then
         enableAutoUpdate()
@@ -1075,14 +1176,28 @@ LLEvents:on("listen", function(channel, _name, id, message)
     end
   elseif channel == COMM_CHANNEL and busy then
     if message == "pinned" and id == currentObjectId then
-      for ____, item in ipairs(pendingItems) do
-        ll.GiveInventory(currentObjectId, item)
-        completedItems = completedItems + 1
+      if finishing then
+        ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "cleanup")
+      else
+        for ____, item in ipairs(pendingItems) do
+          ll.GiveInventory(currentObjectId, item)
+          completedItems = completedItems + 1
+        end
+
+        startParticles(currentObjectId)
+        pendingScriptIdx = 0
+        loadNextScript()
+      end
+    elseif message == "cleaned" and id == currentObjectId and finishing then
+      if timeoutTimer then
+        LLTimers:off(timeoutTimer)
+        timeoutTimer = nil
       end
 
-      startParticles(currentObjectId)
-      pendingScriptIdx = 0
-      loadNextScript()
+      completedItems = completedItems + 1
+      logStatus(currentObjectName .. " cleaned.")
+      ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
+      cleanupNext()
     elseif message == "ready" and id == currentObjectId then
       if timeoutTimer then
         LLTimers:off(timeoutTimer)

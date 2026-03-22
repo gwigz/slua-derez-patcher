@@ -234,6 +234,18 @@ export function parseFormItems(body: string) {
   return { queue, filter };
 }
 
+/** Goodbye message shown after cleanup finishes. OOB swap replaces `<main>` content. */
+export const GOODBYE_FRAGMENT = (
+  <main hx-swap-oob="innerHTML">
+    <article style="text-align:center;padding:2rem 1rem;">
+      <h2>All done!</h2>
+      <p style="color:var(--muted-foreground);">
+        All scripts and inventory items have been removed. You can close this page.
+      </p>
+    </article>
+  </main>
+);
+
 /**
  * Builds the autoupdate controls reflecting current server state.
  * Returned for GET /autoupdate and POST /autoupdate.

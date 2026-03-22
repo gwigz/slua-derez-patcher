@@ -13,11 +13,12 @@
  *   /7 auto <n>  - enable auto-update with <n> second debounce
  *
  * Patch protocol (COMM_CHANNEL):
- *   1. Patcher rezzes object with PIN as start param
- *   2. Bootstrap sets pin, sends "pinned"
- *   3. Patcher transfers items and scripts, sends "done"
- *   4. Bootstrap confirms with "ready"
- *   5. Patcher derezzes object back to inventory
+ *   1. Patcher generates random pin, signs it with ComputeHash
+ *   2. Patcher rezzes object with "pin|hash" as REZ_PARAM_STRING
+ *   3. Bootstrap verifies hash, sets pin, sends "pinned"
+ *   4. Patcher transfers items and scripts, sends "done"
+ *   5. Bootstrap clears pin, confirms with "ready"
+ *   6. Patcher derezzes object back to inventory
  *
  * @link https://github.com/gwigz/slua-derez-patcher
  */
@@ -27,6 +28,7 @@ import { pageShell, appFragment } from "./template";
 import {
   buildObjectList,
   buildStatusFragment,
+  GOODBYE_FRAGMENT,
   parseFormItems,
   parseFormValue,
   buildAutoUpdateControls,
@@ -71,6 +73,18 @@ let completedItems = 0;
 
 /** Whether a patch operation is in progress. Prevents concurrent patching. */
 let busy = false;
+
+/** Whether a cleanup (finish) operation is in progress. */
+let finishing = false;
+
+/** Ordered list of object names waiting to be cleaned up. */
+let cleanupQueue: string[] = [];
+
+/** Current position in the cleanup queue (0-indexed). */
+let cleanupIndex = 0;
+
+/** Random pin for the current patch cycle, signed and passed via REZ_PARAM_STRING. */
+let currentPin = 0;
 
 /** Handle for the per-object timeout timer, cleared on successful response. */
 let timeoutTimer: LLTimerCallback | null = null;
@@ -133,14 +147,14 @@ function pushStatus(message: string) {
 
 /** Builds a status fragment from current patch state. */
 function statusFragment() {
-  return buildStatusFragment(busy, completedItems, totalItems, statusLog, isAutoUpdateEnabled());
+  return buildStatusFragment(busy || finishing, completedItems, totalItems, statusLog, isAutoUpdateEnabled());
 }
 
-/** Responds to the held long-poll request with current status. */
-function respondPoll() {
+/** Responds to the held long-poll request with current status, plus optional extra HTML. */
+function respondPoll(extraHtml = "") {
   if (pollRequestId === "") return;
 
-  respondHtml(pollRequestId as unknown as uuid, statusFragment());
+  respondHtml(pollRequestId as unknown as uuid, statusFragment() + extraHtml);
 
   pollRequestId = "";
 
@@ -149,6 +163,22 @@ function respondPoll() {
 
     pollTimer = null;
   }
+}
+
+/** Generates a random pin, signs it, rezzes the named object with the signed start string. */
+function rezWithSignedPin(objectName: string) {
+  currentPin = Math.floor(Math.random() * 2147483646) + 1;
+  const pinStr = `${currentPin}`;
+  const signature = ll.ComputeHash(SECRET + "|" + pinStr, "sha256");
+
+  currentObjectId = ll.RezObjectWithParams(objectName, [
+    REZ_POS,
+    new Vector(0, 0, 1),
+    1,
+    0,
+    REZ_PARAM_STRING,
+    pinStr + "|" + signature,
+  ]);
 }
 
 /**
@@ -170,7 +200,7 @@ function loadNextScript() {
 
   pushStatus(`Loading ${name} into ${currentObjectName}`);
 
-  ll.RemoteLoadScriptPin(currentObjectId, script, PIN, 1, 0);
+  ll.RemoteLoadScriptPin(currentObjectId, script, currentPin, 1, 0);
   completedItems++;
   pendingScriptIdx++;
 
@@ -182,9 +212,10 @@ function loadNextScript() {
 }
 
 /**
- * Advances to the next object in the queue. Rezzes it with PIN, sets up a
- * timeout, and waits for the bootstrap handshake. Clears state when the
- * queue is exhausted.
+ * Advances to the next object in the queue. Generates a random pin, signs
+ * it, rezzes the object with the signed start string, sets up a timeout,
+ * and waits for the bootstrap handshake. Clears state when the queue is
+ * exhausted.
  */
 function patchNext() {
   if (queueIndex >= patchQueue.length) {
@@ -249,8 +280,7 @@ function patchNext() {
 
   pushStatus(`Rezzing ${currentObjectName}... [${completedItems}/${totalItems}]`);
 
-  // Rez 1m above prim center with PIN as start param
-  currentObjectId = ll.RezObjectWithParams(currentObjectName, [REZ_POS, new Vector(0, 0, 1), 1, 0, REZ_PARAM, PIN]);
+  rezWithSignedPin(currentObjectName);
 
   // 3.5s per script (RemoteLoadScriptPin delay) plus 10s buffer
   const timeoutSeconds = pendingScripts.length * 3.5 + 10;
@@ -302,6 +332,64 @@ function startPatching(queue: string[], itemFilter?: Record<string, string[]>, r
   pushStatus(`Patching ${totalItems} item(s) across ${queue.length} object(s)...`);
 
   patchNext();
+}
+
+/**
+ * Advances to the next object in the cleanup queue. Rezzes it with a signed
+ * start string, sets up a 10s timeout, and waits for the bootstrap handshake.
+ * When the queue is exhausted, calls removeAllInventory() to finish.
+ */
+function cleanupNext() {
+  if (cleanupIndex >= cleanupQueue.length) {
+    cleanupQueue = [];
+    cleanupIndex = 0;
+
+    clearStatus();
+    removeAllInventory();
+
+    return;
+  }
+
+  currentObjectName = cleanupQueue[cleanupIndex];
+  cleanupIndex++;
+
+  setStatus(currentObjectName + "\nCleaning up\n[" + cleanupIndex + "/" + cleanupQueue.length + "]");
+
+  pushStatus(`Rezzing ${currentObjectName} for cleanup... [${cleanupIndex}/${cleanupQueue.length}]`);
+
+  rezWithSignedPin(currentObjectName);
+
+  // 10s timeout - cleanup is just a message exchange, no script loading
+  timeoutTimer = LLTimers.once(10, () => {
+    timeoutTimer = null;
+
+    pushStatus(`Timeout waiting for ${currentObjectName}, skipping.`);
+    ll.DerezObject(currentObjectId, DEREZ_DIE);
+
+    cleanupNext();
+  });
+}
+
+/** Removes all inventory items except this script, sends goodbye, then self-deletes. */
+function removeAllInventory() {
+  pushStatus("Removing patcher inventory...");
+
+  const count = ll.GetInventoryNumber(INVENTORY_ALL);
+
+  for (let i = count - 1; i >= 0; i--) {
+    const name = ll.GetInventoryName(INVENTORY_ALL, i);
+
+    if (name !== SELF_NAME) {
+      ll.RemoveInventory(name);
+    }
+  }
+
+  logStatus("Cleanup complete. Goodbye!");
+
+  // Send final poll response with goodbye OOB swap before self-deleting
+  respondPoll(GOODBYE_FRAGMENT);
+
+  ll.RemoveInventory(SELF_NAME);
 }
 
 /** Releases the current HTTP-in URL and requests a new one. */
@@ -415,6 +503,26 @@ LLEvents.on("http_request", (requestId, method, body) => {
       }
 
       respondHtml(requestId, statusFragment());
+    } else if (url === "/finish") {
+      if (busy) {
+        respondHtml(requestId, statusFragment());
+        return;
+      }
+
+      finishing = true;
+      busy = true;
+      statusLog = [];
+      completedItems = 0;
+
+      cleanupQueue = getObjectNames();
+      cleanupIndex = 0;
+      totalItems = cleanupQueue.length;
+
+      pushStatus(`Cleaning up ${cleanupQueue.length} object(s)...`);
+
+      respondHtml(requestId, statusFragment());
+
+      cleanupNext();
     } else if (url === "/autoupdate") {
       if (parseFormValue(body, "enabled") === "on") {
         enableAutoUpdate();
@@ -475,16 +583,33 @@ LLEvents.on("listen", (channel, _name, id, message) => {
     }
     // Bootstrap protocol
   } else if (channel === COMM_CHANNEL && busy) {
-    // Object is rezzed and pinned, transfer inventory using cached scan from patchNext()
     if (message === "pinned" && id === currentObjectId) {
-      for (const item of pendingItems) {
-        ll.GiveInventory(currentObjectId, item);
-        completedItems++;
+      if (finishing) {
+        // Cleanup mode: tell bootstrap to remove itself
+        ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "cleanup");
+      } else {
+        // Patch mode: transfer inventory using cached scan from patchNext()
+        for (const item of pendingItems) {
+          ll.GiveInventory(currentObjectId, item);
+          completedItems++;
+        }
+
+        startParticles(currentObjectId);
+        pendingScriptIdx = 0;
+        loadNextScript();
+      }
+    } else if (message === "cleaned" && id === currentObjectId && finishing) {
+      if (timeoutTimer) {
+        LLTimers.off(timeoutTimer);
+        timeoutTimer = null;
       }
 
-      startParticles(currentObjectId);
-      pendingScriptIdx = 0;
-      loadNextScript();
+      completedItems++;
+      logStatus(`${currentObjectName} cleaned.`);
+
+      ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
+
+      cleanupNext();
       // Transfer complete, derez back to inventory
     } else if (message === "ready" && id === currentObjectId) {
       if (timeoutTimer) {
