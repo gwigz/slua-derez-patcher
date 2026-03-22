@@ -88,9 +88,41 @@ const patcherData = function () {
   };
 };
 
+/** Disconnected page shown when the capability URL dies. Function (not const) so jsx-inline treats it as a templateFn evaluated before pageShell. */
+function disconnectedHtml() {
+  return (
+    <article empty>
+      <i data-lucide="wifi-off" color="destructive"></i>
+      <h2>Disconnected</h2>
+      <b>The connection has been lost, you can close this page</b>
+    </article>
+  );
+}
+
+/** HTMX lifecycle: re-init icons/Alpine after swaps, show disconnected state on cap error. */
+const htmxInit = function (html: string) {
+  const g = globalThis as any;
+
+  document.addEventListener("htmx:load", (e: any) => {
+    g.lucide.createIcons();
+    if (g.Alpine) g.Alpine.initTree(e.target);
+  });
+
+  // One-shot: on first HTMX error, replace page with disconnected message
+  function dc() {
+    document.removeEventListener("htmx:sendError", dc);
+    document.removeEventListener("htmx:responseError", dc);
+    document.querySelector("main")!.innerHTML = html;
+    g.lucide.createIcons();
+  }
+
+  document.addEventListener("htmx:sendError", dc);
+  document.addEventListener("htmx:responseError", dc);
+};
+
 export function pageShell(baseUrl: string, objectName: string) {
   return (
-    <html xmlns="http://www.w3.org/1999/xhtml" lang="en" data-theme="dark">
+    <html xmlns="http://www.w3.org/1999/xhtml" lang="en">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -98,178 +130,47 @@ export function pageShell(baseUrl: string, objectName: string) {
         <title>{objectName}</title>
         <link
           rel="icon"
-          href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🎯</text></svg>'
+          href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🧩</text></svg>'
         />
-        <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fordus/shadcn-classless@main/dist/shadcn-classless.css" />
-        <script src="//cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
+        <link rel="stylesheet" href="//unpkg.com/@gwigz/slick-css@1.0.0/dist/slick-static.min.css" />
+        <script src="//unpkg.com/htmx.org@2.0.8/dist/htmx.min.js"></script>
         <script>
           {`/*<![CDATA[*/document.addEventListener('alpine:init',()=>{Alpine.data('patcher',${patcherData.toString()})})/*]]>*/`}
         </script>
-        <script src="//cdn.jsdelivr.net/npm/lucide@0.460/dist/umd/lucide.min.js"></script>
+        <script src="//unpkg.com/lucide@0.577/dist/umd/lucide.min.js"></script>
         <style>
           {`
-            b { font-weight: inherit; }
-            button[destructive] { background: var(--destructive); }
-            body { max-width: 580px; padding: 1.5rem 1rem; }
-            input[type="checkbox"] { margin: 0; flex-shrink: 0; }
-            h2 { margin: 0 0 1rem; }
-
-            .toolbar, .obj-header, .panel-body, .item-row {
-              display: flex;
-              align-items: center;
-              gap: 0.5rem;
-            }
-            .toolbar label, .panel-body label {
-              display: flex;
-              align-items: center;
-              gap: 0.4rem;
-              margin: 0;
-              cursor: pointer;
-              color: var(--muted-foreground);
-            }
-            .toolbar label { font-size: 0.8rem; }
-            .toolbar {
-              flex-wrap: wrap;
-              margin-bottom: 0.75rem;
-            }
-            .toolbar button, .toolbar [type="submit"] {
-              font-size: 0.75rem;
-              padding: 0.4rem 0.75rem;
-              margin: 0;
-              white-space: nowrap;
-            }
-            .toolbar svg { width: 14px; height: 14px; vertical-align: -2px; }
-
-            .obj-list { margin-bottom: 1rem; }
-            .obj-group { background: var(--card); }
-            details { padding: 0; overflow: hidden; }
-            summary { list-style: none; }
-            summary::marker { display: none; content: none; }
-            summary::-webkit-details-marker { display: none; }
-
-            .obj-header {
-              padding: 0.6rem 0.75rem;
-              user-select: none;
-            }
-            .obj-header:hover { background: var(--accent); }
-            .truncate {
-              min-width: 0;
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-            }
-            .obj-name, .item-name { flex: 1; }
-            .obj-name { font-size: 0.85rem; font-weight: 600; }
-            .obj-toggle {
-              color: var(--muted-foreground);
-              font-size: 0.7rem;
-              flex-shrink: 0;
-              width: 1rem;
-              text-align: center;
-              transition: transform 0.15s;
-            }
-            details[open] > summary .obj-toggle { transform: rotate(90deg); }
-
-            kbd {
-              font-size: 0.65rem;
-              font-weight: 600;
-              text-transform: uppercase;
-            }
-
-            .obj-items {
-              border-top: var(--border);
-              background: var(--secondary);
-            }
-            .item-row {
-              padding: 0.35rem 0.75rem 0.35rem 2.25rem;
-              font-size: 0.78rem;
-              border-bottom: var(--border);
-            }
-            .item-row:last-child { border-bottom: none; }
-
-            .empty-state { text-align: center; padding: 2rem 1rem; color: var(--muted-foreground); }
-
-            #status { font-size: 0.8rem; flex-direction: column; align-items: stretch; }
-            #status > b { font-weight: 600; }
-.status-log {
-              margin-top: 0.5rem;
-              max-height: 160px;
-              overflow-y: auto;
-            }
-            .status-log p {
-              margin: 0;
-              padding: 0.1rem 0;
-              color: var(--muted-foreground);
-              font-size: 0.7rem;
-              font-family: ui-monospace, monospace;
-              line-height: 1.3;
-            }
-            .status-log p:last-child { color: var(--foreground); }
-
-            .panel {
-              margin-bottom: 0.75rem;
-              background: var(--card);
-              padding: 0;
-              overflow: hidden;
-            }
-            .panel-header {
-              font-size: 0.7rem;
-              font-weight: 600;
-              text-transform: uppercase;
-              letter-spacing: 0.05em;
-              color: var(--muted-foreground);
-              padding: 0.4rem 0.75rem;
-              border-bottom: var(--border);
-            }
-            .panel-body {
-              font-size: 0.8rem;
-              padding: 0.5rem 0.75rem;
-            }
-            .debounce-label {
-              margin-left: auto !important;
-            }
-            .debounce-label input[type="number"] {
-              width: 3.5rem;
-              font-size: 0.75rem;
-              padding: 0.2rem 0.4rem;
-              margin: 0;
-              text-align: center;
-              border: var(--border);
-              border-radius: var(--radius);
-              background: var(--background);
-              color: var(--foreground);
-            }
-
-            dialog { max-width: 400px; width: 90vw; }
-            dialog footer { display: flex; gap: 0.5rem; justify-content: flex-end; }
+            form { display: contents }
+            .obj-group:last-child { border-bottom: none }
+            .item-row { padding: 0.35rem 0.75rem 0.35rem 2.25rem }
+            article > header { font-weight: 600 }
+            #status { flex-direction: column; align-items: stretch }
           `}
         </style>
       </head>
       <body>
-        <main hx-get="app" hx-trigger="load">
-          <article aria-busy="spinner" style="text-align: center;"></article>
+        <main sm hx-get="app" hx-trigger="load" stack>
+          <article aria-busy="true" align="center"></article>
         </main>
-        <script>{`/*<![CDATA[*/document.addEventListener('htmx:load',(e)=>{lucide.createIcons();if(window.Alpine)Alpine.initTree(e.target)})/*]]>*/`}</script>
-        <script defer src="//cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+        <script>{`/*<![CDATA[*/(${htmxInit.toString()})(${JSON.stringify(disconnectedHtml())})/*]]>*/`}</script>
+        <script defer src="//unpkg.com/alpinejs@3.15.8/dist/cdn.min.js"></script>
       </body>
     </html>
   );
 }
 
-export function appFragment(objectName: string) {
+export function appFragment() {
   return (
     <Fragment>
-      <h2>{objectName}</h2>
-      <hr />
-
       <form x-data="patcher">
-        <div class="toolbar">
+        <div row>
           <label>
             <input type="checkbox" {...{ "x-bind:checked": "allChecked", "x-on:click": "toggleAll()" }} /> All
           </label>
-          <b style="flex:1"></b>
+          <b spacer></b>
           <button
             type="submit"
+            sm
             hx-post="patch"
             hx-target="#status"
             x-show="items.length"
@@ -277,52 +178,50 @@ export function appFragment(objectName: string) {
           >
             <i data-lucide="play"></i> Patch
           </button>
-          <button type="button" hx-post="patch-all" hx-target="#status">
+          <button type="button" sm hx-post="patch-all" hx-target="#status">
             <i data-lucide="layers"></i> Patch All
           </button>
-          <button type="button" secondary hx-get="objects" hx-target="#objects">
+          <button type="button" sm secondary hx-get="objects" hx-target="#objects">
             <i data-lucide="refresh-cw"></i>
           </button>
         </div>
 
-        <div
+        <article
           id="objects"
+          flush
           hx-get="objects"
           hx-trigger="load"
           {...{ "x-on:change": "sync()", "x-on:htmx:after-swap.camel": "sync()" }}
         >
-          <article aria-busy="spinner" style="text-align: center;"></article>
-        </div>
+          <article aria-busy="true" align="center"></article>
+        </article>
       </form>
 
       <div id="autoupdate" hx-get="autoupdate" hx-trigger="load" />
 
-      <article class="panel">
-        <div class="panel-header">Status</div>
-        <div id="status" class="panel-body">
+      <article flush>
+        <header>Status</header>
+        <div id="status" row>
           Ready
         </div>
       </article>
 
-      <b style="display:block;text-align:center;padding:0.5rem 0" x-data="{ confirm: '' }">
-        <button
-          type="button"
-          style="font-size:0.72rem;color:var(--destructive);padding:0.25rem 0.6rem"
-          secondary
-          {...{ "x-on:click": "$refs.fd.showModal()" }}
-        >
+      <div align="center" x-data="{ confirmText: '' }">
+        <button type="button" sm destructive {...{ "x-on:click": "$refs.fd.showModal()" }}>
           {"Remove patcher scripts\u2026"}
         </button>
 
-        <dialog x-ref="fd" style="text-align:left">
-          <h3 style="margin:0 0 0.75rem;">Remove patcher scripts?</h3>
-          <p>This will remove the bootstrap script from every target object, then delete the patcher script.</p>
-          <p style="margin-bottom:0.25rem;color:var(--foreground);font-weight:600;font-size:0.78rem;">
-            {"Type FINISH to confirm"}
-          </p>
-          <input type="text" x-model="confirm" placeholder="FINISH" autocomplete="off" style="width:100%" />
+        <dialog align="left" x-ref="fd">
+          <header>
+            <h3>Remove patcher scripts?</h3>
+            <p>This will remove the bootstrap script from every target object, then delete the patcher script.</p>
+          </header>
+          <div stack="xs">
+            <label for="confirmText">Type FINISH to confirm</label>
+            <input type="text" id="confirmText" x-model="confirmText" placeholder="FINISH" autocomplete="off" />
+          </div>
           <footer>
-            <button type="button" secondary {...{ "x-on:click": "confirm='';$refs.fd.close()" }}>
+            <button type="button" secondary {...{ "x-on:click": "confirmText='';$refs.fd.close()" }}>
               Cancel
             </button>
             <button
@@ -330,13 +229,16 @@ export function appFragment(objectName: string) {
               hx-post="finish"
               hx-target="#status"
               destructive
-              {...{ "x-bind:disabled": "confirm !== 'FINISH'", "x-on:click": "confirm='';$refs.fd.close()" }}
+              {...{
+                "x-bind:disabled": "confirmText.toUpperCase() !== 'FINISH'",
+                "x-on:click": "confirmText='';$refs.fd.close()",
+              }}
             >
               Confirm
             </button>
           </footer>
         </dialog>
-      </b>
+      </div>
     </Fragment>
   );
 }

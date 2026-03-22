@@ -225,13 +225,13 @@ graph TD
     Browser --> CDN
     CDN --> HTMX(HTMX)
     CDN --> Alpine(Alpine.js)
-    CDN --> shadcn(shadcn classless)
+    CDN --> SlickCSS(Slick CSS)
     CDN --> Lucide(Lucide Icons)
 ```
 
 The stack is deliberately minimal, everything the script serves has to fit in SLua's script memory.
 
-[HTMX](https://htmx.org) fits perfectly: the server sends tiny HTML fragments instead of JSON, and the client swaps them in place with no build step or client-side routing. [Alpine.js](https://alpinejs.dev) covers client-side state (checkbox toggles, select-all). [shadcn classless](https://github.com/fordus/shadcn-classless) gives a clean dark-mode look with zero classes, and [Lucide](https://lucide.dev) provides icons via `data-lucide` tags.
+[HTMX](https://htmx.org) fits perfectly: the server sends tiny HTML fragments instead of JSON, and the client swaps them in place with no build step or client-side routing. [Alpine.js](https://alpinejs.dev) covers client-side state (checkbox toggles, select-all). [Slick CSS](https://github.com/gwigz/slick-css) gives a clean dark-mode look with minimal classes, and [Lucide](https://lucide.dev) provides icons via `data-lucide` tags.
 
 Everything loads from CDN so the SLua script never serves static assets.
 

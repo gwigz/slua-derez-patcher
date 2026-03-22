@@ -1,12 +1,16 @@
 import { getObjectNames, getItemsForObject, patternMatches, targetItemName, inventoryTypeLabel } from "./inventory";
 
-const EMPTY_STATE = <div class="empty-state">No patchable objects found in inventory.</div>;
+const EMPTY_STATE = (
+  <article empty>
+    <b>No patchable objects found in inventory.</b>
+  </article>
+);
 
-const STATUS_DONE = <b>Done</b>;
+const STATUS_DONE = <strong>Done</strong>;
 
-const POLL_TRIGGER = <div hx-get="poll" hx-trigger="load" hx-target="#status"></div>;
+const POLL_TRIGGER = <div style="display:none" hx-get="poll" hx-trigger="load" hx-target="#status"></div>;
 
-export const NO_ITEMS_SELECTED = <b>No items selected</b>;
+export const NO_ITEMS_SELECTED = <strong>No items selected</strong>;
 
 // --- Runtime code (compiled by TSTL to Luau) ---
 
@@ -22,12 +26,12 @@ function buildItemRow(fullItemName: string) {
   const itemName = escapeHtml(targetItemName(fullItemName));
 
   return (
-    <label class="item-row">
+    <label class="item-row" row>
       <input type="checkbox" name="item" value={escaped} {...{ "x-on:change": "sync()" }} />
-      <b class="item-name truncate" {...{ "tooltip-top": itemName }}>
+      <b spacer truncate {...{ "tooltip-top": itemName }}>
         {itemName}
       </b>
-      <kbd {...{ secondary: true }}>{typeLabel}</kbd>
+      <kbd outline>{typeLabel}</kbd>
     </label>
   );
 }
@@ -56,22 +60,21 @@ export function buildObjectList(selfName: string) {
       }
 
       html += (
-        <details class="obj-group">
+        <details class="obj-group" left>
           <summary>
-            <div class="obj-header">
-              <b class="obj-toggle">{"&#9654;"}</b>
+            <div class="obj-header" row spacer>
               <input
                 type="checkbox"
                 {...{
                   "x-on:click.stop": `toggleObject('${escaped}')`,
                 }}
               />
-              <b class="obj-name truncate" {...{ "tooltip-top": escaped }}>
+              <strong class="obj-name" spacer truncate {...{ "tooltip-top": escaped }}>
                 {escaped}
-              </b>
+              </strong>
             </div>
           </summary>
-          <div class="obj-items">{itemsHtml}</div>
+          <div>{itemsHtml}</div>
         </details>
       );
     }
@@ -95,16 +98,16 @@ export function buildStatusFragment(busy: boolean, index: number, total: number,
   if (busy) {
     html += (
       <>
-        <b>
+        <strong>
           Patching {index}/{total}
-        </b>
+        </strong>
         <progress value={index} max={total}></progress>
       </>
     );
   } else if (total > 0) {
     html += (
       <>
-        <b>Done</b>
+        {STATUS_DONE}
         <progress value={total} max={total}></progress>
       </>
     );
@@ -119,7 +122,7 @@ export function buildStatusFragment(busy: boolean, index: number, total: number,
       logHtml += <p>{escapeHtml(entry)}</p>;
     }
 
-    html += <div class="status-log">{logHtml}</div>;
+    html += <samp>{logHtml}</samp>;
   }
 
   if (busy || autoUpdate) {
@@ -237,12 +240,10 @@ export function parseFormItems(body: string) {
 /** Goodbye message shown after cleanup finishes. OOB swap replaces `<main>` content. */
 export const GOODBYE_FRAGMENT = (
   <main hx-swap-oob="innerHTML:main">
-    <article style="text-align:center;padding:2rem 1rem;text-wrap:balance;">
-      <i data-lucide="circle-check" style="width:2.5rem;height:2.5rem;color:#22c55e;margin-bottom:0.5rem;"></i>
+    <article empty>
+      <i data-lucide="circle-check" color="success"></i>
       <h2>All done!</h2>
-      <b style="color:var(--muted-foreground);">
-        Bootstrap scripts have been removed from your objects, you can close this page
-      </b>
+      <b>Bootstrap scripts have been removed from your objects, you can close this page</b>
     </article>
   </main>
 );
@@ -252,47 +253,20 @@ export const GOODBYE_FRAGMENT = (
  * Returned for GET /autoupdate and POST /autoupdate.
  */
 export function buildAutoUpdateControls(enabled: boolean, debounce: number) {
-  if (enabled) {
-    return (
-      <article class="panel">
-        <div class="panel-header">Settings</div>
-        <div class="panel-body">
-          <label>
-            <input type="checkbox" name="enabled" checked hx-post="autoupdate" hx-target="#autoupdate" />
-            {" Auto-update"}
-          </label>
-          <label class="debounce-label">
-            {"Delay "}
-            <input
-              type="number"
-              name="debounce"
-              value={debounce}
-              min="1"
-              max="60"
-              hx-post="autoupdate-debounce"
-              hx-target="#autoupdate"
-              hx-trigger="change delay:500ms"
-            />
-            {" s"}
-          </label>
-        </div>
-        {POLL_TRIGGER}
-      </article>
-    );
-  }
-
-  return (
-    <article class="panel">
-      <div class="panel-header">Settings</div>
-      <div class="panel-body">
-        <label>
-          <input type="checkbox" name="enabled" hx-post="autoupdate" hx-target="#autoupdate" />
+  let html = (
+    <article flush>
+      <header>Settings</header>
+      <div row>
+        <label spacer>
+          <input type="checkbox" name="enabled" checked={enabled} hx-post="autoupdate" hx-target="#autoupdate" />
           {" Auto-update"}
         </label>
-        <label class="debounce-label">
+        <label>
           {"Delay "}
           <input
             type="number"
+            sm
+            style="width:3.5rem"
             name="debounce"
             value={debounce}
             min="1"
@@ -306,4 +280,10 @@ export function buildAutoUpdateControls(enabled: boolean, debounce: number) {
       </div>
     </article>
   );
+
+  if (enabled) {
+    html += POLL_TRIGGER;
+  }
+
+  return html;
 }
