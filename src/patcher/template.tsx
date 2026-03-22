@@ -109,6 +109,7 @@ export function pageShell(baseUrl: string, objectName: string) {
         <style>
           {`
             b { font-weight: inherit; }
+            button[destructive] { background: var(--destructive); }
             body { max-width: 580px; padding: 1.5rem 1rem; }
             input[type="checkbox"] { margin: 0; flex-shrink: 0; }
             h2 { margin: 0 0 1rem; }
