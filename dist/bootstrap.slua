@@ -2,13 +2,11 @@
 SLua Derez Patcher — bootstrap receiver for target objects
 
 Drop this script into every object that the patcher should be able to
-update. It sets a remote script access PIN so the patcher can load
-scripts into the object via ll.RemoteLoadScriptPin.
-
-When the object is rezzed with the correct PIN as its start parameter,
-this script signals "pinned" to the patcher, waits for a "done" message
-once all items and scripts have been transferred, then replies "ready"
-so the patcher can derez the object back to inventory.
+update. When the object is rezzed with a signed start string ("pin|hash"),
+this script verifies the hash against a shared secret, sets the pin, and
+signals "pinned" to the patcher. After all items and scripts have been
+transferred, it clears the pin and replies "ready" so the patcher can
+derez the object back to inventory.
 
 @link https://github.com/gwigz/slua-derez-patcher
 ]]
@@ -16,33 +14,63 @@ so the patcher can derez the object back to inventory.
 --- Internal channel for patcher/bootstrap protocol messages.
 local COMM_CHANNEL = -47123
 
---- Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`.
-local PIN = 87654321
+--- Shared secret for signing dynamic script access pins.
+local SECRET = "slua-derez-patcher"
 
 --[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 --- Active listen handle, or 0 when not listening.
 local listenHandle = 0
 
-ll.SetRemoteScriptAccessPin(PIN)
+LLEvents:on("on_rez", function()
+  local startString = ll.GetStartString()
 
-LLEvents:on("on_rez", function(startParam)
-  if startParam == PIN then
-    if listenHandle ~= 0 then
-      ll.ListenRemove(listenHandle)
-    end
-
-    listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
-    ll.RegionSay(COMM_CHANNEL, "pinned")
+  if startString == "" then
+    return
   end
+
+  local parts = string.split(startString, "|")
+
+  if #parts ~= 2 then
+    return
+  end
+
+  local pinStr, signature = table.unpack(parts, 1, 2)
+
+  if ll.ComputeHash((SECRET .. "|") .. pinStr, "sha256") ~= signature then
+    return
+  end
+
+  local pin = tonumber(pinStr)
+
+  if pin == nil or pin == 0 then
+    return
+  end
+
+  ll.SetRemoteScriptAccessPin(pin)
+
+  if listenHandle ~= 0 then
+    ll.ListenRemove(listenHandle)
+  end
+
+  listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
+  ll.RegionSay(COMM_CHANNEL, "pinned")
 end)
 
 LLEvents:on("listen", function(channel, name, id, message)
-  if channel == COMM_CHANNEL and message == "done" then
+  if channel ~= COMM_CHANNEL then
+    return
+  end
+
+  if message == "done" then
+    ll.SetRemoteScriptAccessPin(0)
     ll.RegionSayTo(id, COMM_CHANNEL, "ready")
 
     if listenHandle ~= 0 then
       ll.ListenRemove(listenHandle)
       listenHandle = 0
     end
+  elseif message == "cleanup" then
+    ll.RegionSayTo(id, COMM_CHANNEL, "cleaned")
+    ll.RemoveInventory(ll.GetScriptName())
   end
 end)
