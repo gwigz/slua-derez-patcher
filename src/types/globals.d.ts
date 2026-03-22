@@ -6,5 +6,5 @@ declare const CMD_CHANNEL: number;
 /** Internal channel for patcher/bootstrap protocol messages. */
 declare const COMM_CHANNEL: number;
 
-/** Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`. */
-declare const PIN: number;
+/** Shared secret for signing dynamic script access pins. */
+declare const SECRET: string;

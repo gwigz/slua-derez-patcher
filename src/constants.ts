@@ -1,5 +1,5 @@
-/** Shared secret for `ll.RemoteLoadScriptPin` / `ll.SetRemoteScriptAccessPin`. */
-export const PIN = 87654321;
+/** Shared secret for signing dynamic script access pins. */
+export const SECRET = "slua-derez-patcher";
 
 /** Internal channel for patcher/bootstrap protocol messages. */
 export const COMM_CHANNEL = -47123;

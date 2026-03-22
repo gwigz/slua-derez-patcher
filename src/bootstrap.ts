@@ -2,13 +2,11 @@
  * SLua Derez Patcher — bootstrap receiver for target objects
  *
  * Drop this script into every object that the patcher should be able to
- * update. It sets a remote script access PIN so the patcher can load
- * scripts into the object via ll.RemoteLoadScriptPin.
- *
- * When the object is rezzed with the correct PIN as its start parameter,
- * this script signals "pinned" to the patcher, waits for a "done" message
- * once all items and scripts have been transferred, then replies "ready"
- * so the patcher can derez the object back to inventory.
+ * update. When the object is rezzed with a signed start string ("pin|hash"),
+ * this script verifies the hash against a shared secret, sets the pin, and
+ * signals "pinned" to the patcher. After all items and scripts have been
+ * transferred, it clears the pin and replies "ready" so the patcher can
+ * derez the object back to inventory.
  *
  * @link https://github.com/gwigz/slua-derez-patcher
  */
@@ -16,22 +14,35 @@
 /** Active listen handle, or 0 when not listening. */
 let listenHandle = 0;
 
-ll.SetRemoteScriptAccessPin(PIN);
+LLEvents.on("on_rez", () => {
+  const startString = ll.GetStartString();
+  if (startString === "") return;
 
-LLEvents.on("on_rez", (startParam) => {
-  if (startParam === PIN) {
-    if (listenHandle !== 0) {
-      ll.ListenRemove(listenHandle);
-    }
+  const parts = startString.split("|");
+  if (parts.length !== 2) return;
 
-    listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY as unknown as uuid, "");
+  const [pinStr, signature] = parts;
+  if (ll.ComputeHash(SECRET + "|" + pinStr, "sha256") !== signature) return;
 
-    ll.RegionSay(COMM_CHANNEL, "pinned");
+  const pin = tonumber(pinStr);
+  if (pin === undefined || pin === 0) return;
+
+  ll.SetRemoteScriptAccessPin(pin);
+
+  if (listenHandle !== 0) {
+    ll.ListenRemove(listenHandle);
   }
+
+  listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY as unknown as uuid, "");
+
+  ll.RegionSay(COMM_CHANNEL, "pinned");
 });
 
 LLEvents.on("listen", (channel, name, id, message) => {
-  if (channel === COMM_CHANNEL && message === "done") {
+  if (channel !== COMM_CHANNEL) return;
+
+  if (message === "done") {
+    ll.SetRemoteScriptAccessPin(0);
     ll.RegionSayTo(id, COMM_CHANNEL, "ready");
 
     if (listenHandle !== 0) {
@@ -39,5 +50,8 @@ LLEvents.on("listen", (channel, name, id, message) => {
 
       listenHandle = 0;
     }
+  } else if (message === "cleanup") {
+    ll.RegionSayTo(id, COMM_CHANNEL, "cleaned");
+    ll.RemoveInventory(ll.GetScriptName());
   }
 });
