@@ -21,7 +21,12 @@ local SECRET = "slua-derez-patcher"
 --- Active listen handle, or 0 when not listening.
 local listenHandle = 0
 
+--- Authenticated patcher UUID for the current session.
+local patcherId
+
 LLEvents:on("on_rez", function()
+  ll.SetRemoteScriptAccessPin(0)
+
   local startString = ll.GetStartString()
 
   if startString == "" then
@@ -47,6 +52,7 @@ LLEvents:on("on_rez", function()
   end
 
   ll.SetRemoteScriptAccessPin(pin)
+  patcherId = NULL_KEY
 
   if listenHandle ~= 0 then
     ll.ListenRemove(listenHandle)
@@ -61,6 +67,16 @@ LLEvents:on("listen", function(channel, name, id, message)
     return
   end
 
+  if not patcherId.istruthy then
+    if ll.GetOwnerKey(id) ~= ll.GetOwner() then
+      return
+    end
+
+    patcherId = id
+  elseif id ~= patcherId then
+    return
+  end
+
   if message == "done" then
     ll.SetRemoteScriptAccessPin(0)
     ll.RegionSayTo(id, COMM_CHANNEL, "ready")
@@ -69,12 +85,22 @@ LLEvents:on("listen", function(channel, name, id, message)
       ll.ListenRemove(listenHandle)
       listenHandle = 0
     end
+
+    patcherId = NULL_KEY
+  elseif string.find(message, "remove|", 1, true) == 1 then
+    local itemName = string.sub(message, 8)
+
+    ll.RemoveInventory(itemName)
+    ll.RegionSayTo(id, COMM_CHANNEL, "removed")
   elseif message == "cleanup" then
+    ll.SetRemoteScriptAccessPin(0)
+
     if listenHandle ~= 0 then
       ll.ListenRemove(listenHandle)
       listenHandle = 0
     end
 
+    patcherId = NULL_KEY
     ll.RegionSayTo(id, COMM_CHANNEL, "cleaned")
 
     LLTimers:once(1, function()

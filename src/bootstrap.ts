@@ -14,7 +14,12 @@
 /** Active listen handle, or 0 when not listening. */
 let listenHandle = 0;
 
+/** Authenticated patcher UUID for the current session. */
+let patcherId: uuid;
+
 LLEvents.on("on_rez", () => {
+  ll.SetRemoteScriptAccessPin(0);
+
   const startString = ll.GetStartString();
   if (startString === "") return;
 
@@ -28,6 +33,7 @@ LLEvents.on("on_rez", () => {
   if (pin === undefined || pin === 0) return;
 
   ll.SetRemoteScriptAccessPin(pin);
+  patcherId = NULL_KEY as unknown as uuid;
 
   if (listenHandle !== 0) {
     ll.ListenRemove(listenHandle);
@@ -41,6 +47,13 @@ LLEvents.on("on_rez", () => {
 LLEvents.on("listen", (channel, name, id, message) => {
   if (channel !== COMM_CHANNEL) return;
 
+  if (!patcherId.istruthy) {
+    if (ll.GetOwnerKey(id) !== ll.GetOwner()) return;
+    patcherId = id;
+  } else if (id !== patcherId) {
+    return;
+  }
+
   if (message === "done") {
     ll.SetRemoteScriptAccessPin(0);
     ll.RegionSayTo(id, COMM_CHANNEL, "ready");
@@ -50,11 +63,21 @@ LLEvents.on("listen", (channel, name, id, message) => {
 
       listenHandle = 0;
     }
+
+    patcherId = NULL_KEY as unknown as uuid;
+  } else if (message.startsWith("remove|")) {
+    const itemName = message.substring(7);
+    ll.RemoveInventory(itemName);
+    ll.RegionSayTo(id, COMM_CHANNEL, "removed");
   } else if (message === "cleanup") {
+    ll.SetRemoteScriptAccessPin(0);
+
     if (listenHandle !== 0) {
       ll.ListenRemove(listenHandle);
       listenHandle = 0;
     }
+
+    patcherId = NULL_KEY as unknown as uuid;
 
     ll.RegionSayTo(id, COMM_CHANNEL, "cleaned");
 

@@ -102,6 +102,9 @@ let pendingItems: string[] = [];
 /** Index into pendingScripts for timer-based sequential loading. */
 let pendingScriptIdx = 0;
 
+/** Index into pendingItems for sequential item transfer with pre-removal. */
+let pendingItemIdx = 0;
+
 /** Timer handle for sequential script loading, cleared on completion or timeout. */
 let scriptLoadTimer: LLTimerCallback | null = null;
 
@@ -183,6 +186,7 @@ function generateSignedPin() {
 /** Rezzes the named object with a signed pin start string, sets currentPin/currentObjectId. */
 function rezWithSignedPin(objectName: string) {
   const { pin, startString } = generateSignedPin();
+
   currentPin = pin;
 
   currentObjectId = ll.RezObjectWithParams(objectName, [
@@ -200,6 +204,27 @@ function scheduleSelfDelete() {
   LLTimers.once(1.0, () => {
     ll.RemoveInventory(SELF_NAME);
   });
+}
+
+/**
+ * Transfers pending items one at a time using a remove-then-give protocol.
+ * Sends "remove|name" to the bootstrap, waits for "removed", then gives
+ * the item. This prevents duplicate items on repeated patches.
+ */
+function giveNextItem() {
+  if (pendingItemIdx >= pendingItems.length) {
+    pendingScriptIdx = 0;
+    loadNextScript();
+    return;
+  }
+
+  const item = pendingItems[pendingItemIdx];
+  const name = targetItemName(item);
+
+  setStatus(currentObjectName + "\nTransferring " + name + "\n[" + completedItems + "/" + totalItems + "]");
+  pushStatus(`Transferring ${name} to ${currentObjectName}`);
+
+  ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "remove|" + item);
 }
 
 /**
@@ -303,8 +328,8 @@ function patchNext() {
 
   rezWithSignedPin(currentObjectName);
 
-  // 3.5s per script (RemoteLoadScriptPin delay) plus 10s buffer
-  const timeoutSeconds = pendingScripts.length * 3.5 + 10;
+  // 3.5s per script (RemoteLoadScriptPin delay) + 1.5s per item (remove/give round-trip) + 10s buffer
+  const timeoutSeconds = pendingScripts.length * 3.5 + pendingItems.length * 1.5 + 10;
 
   timeoutTimer = LLTimers.once(timeoutSeconds, () => {
     stopParticles();
@@ -313,6 +338,9 @@ function patchNext() {
       LLTimers.off(scriptLoadTimer);
       scriptLoadTimer = null;
     }
+
+    // Prevent late "removed" messages from being processed after timeout
+    pendingItemIdx = pendingItems.length;
 
     pushStatus(`Timeout waiting for ${currentObjectName}, derezing.`);
     ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
@@ -532,7 +560,7 @@ LLEvents.on("http_request", (requestId, method, body) => {
     } else if (url === "/objects") {
       respondHtml(requestId, buildObjectList(SELF_NAME));
     } else if (url === "/poll") {
-      // Goodbye was pending while no poll was held — deliver it now
+      // Goodbye was pending while no poll was held, deliver it now
       if (goodbyePending) {
         goodbyePending = false;
         respondHtml(requestId, statusFragment() + GOODBYE_FRAGMENT);
@@ -687,17 +715,17 @@ LLEvents.on("listen", (channel, _name, id, message) => {
         }
       }
     } else if (message === "pinned" && id === currentObjectId && !finishing) {
-      // Patch mode: transfer inventory using cached scan from patchNext()
-      for (const item of pendingItems) {
-        ll.GiveInventory(currentObjectId, item);
-        completedItems++;
-      }
-
       startParticles(currentObjectId);
-      pendingScriptIdx = 0;
-      loadNextScript();
+      pendingItemIdx = 0;
+      giveNextItem();
+    } else if (message === "removed" && id === currentObjectId && !finishing && pendingItemIdx < pendingItems.length) {
+      const item = pendingItems[pendingItemIdx];
+      ll.GiveInventory(currentObjectId, item);
+      completedItems++;
+      pendingItemIdx++;
+      giveNextItem();
     } else if (message === "cleaned" && finishing) {
-      // Just log — derez is batched after all cleanups
+      // Just log, derez is batched after all cleanups
       const entry = findCleanupEntry(id);
 
       if (entry) {

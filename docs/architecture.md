@@ -94,14 +94,11 @@ sequenceDiagram
     Patcher->>Patcher: Self-delete (1s delay)
 ```
 
-### Key design decisions
+## Design Decisions
 
-- **Parallel rez**: All objects are rezzed at once rather than sequentially. A single 15s timeout covers the entire batch instead of 10s per object.
-- **Never DEREZ_DIE**: Objects are always derezzed with `DEREZ_TO_INVENTORY`, never destroyed. Even on timeout, the user's objects are preserved.
-- **Bootstrap delays self-deletion**: The bootstrap sends "cleaned" then waits 1s before `ll.RemoveInventory` so the message is delivered before the script dies.
-- **Patcher waits 3s before derez**: Gives bootstrap scripts time to self-delete (1s) with margin. Derezing too early would return the object with the bootstrap still inside.
-- **Derez verification**: After derezing, the patcher polls `ll.GetObjectDetails` up to 5 times (1.5s apart) to confirm all objects are actually gone before proceeding.
-- **Goodbye delivery**: The goodbye page is sent via the long-poll response. If no poll is pending when cleanup finishes, `goodbyePending` is set so the next `/poll` request delivers it. The patcher waits 1s after sending goodbye before self-deleting so the HTTP response is delivered.
+- **Signed pin handshake**: Prevents unauthorized `ll.RemoteLoadScriptPin` access. The pin is cleared on rez, after patching, and during cleanup so it's never left active.
+- **Sequential patching**: Each object needs multiple round-trips (item removal, script loading), so they are processed one at a time.
+- **Parallel cleanup**: All objects are rezzed at once and each is verified before proceeding. If any step fails, the bootstraps are still intact so the user can retry.
 
 ## Project Structure
 
