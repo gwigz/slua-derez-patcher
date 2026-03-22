@@ -51,7 +51,15 @@ LLEvents.on("listen", (channel, name, id, message) => {
       listenHandle = 0;
     }
   } else if (message === "cleanup") {
+    if (listenHandle !== 0) {
+      ll.ListenRemove(listenHandle);
+      listenHandle = 0;
+    }
+
     ll.RegionSayTo(id, COMM_CHANNEL, "cleaned");
-    ll.RemoveInventory(ll.GetScriptName());
+
+    LLTimers.once(1.0, () => {
+      ll.RemoveInventory(ll.GetScriptName());
+    });
   }
 });

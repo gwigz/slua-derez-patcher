@@ -77,11 +77,17 @@ let busy = false;
 /** Whether a cleanup (finish) operation is in progress. */
 let finishing = false;
 
-/** Ordered list of object names waiting to be cleaned up. */
-let cleanupQueue: string[] = [];
+/** Objects being cleaned up in parallel: name, rezzed uuid, whether pinned. */
+let cleanupObjects: { name: string; id: uuid; pinned: boolean }[] = [];
 
-/** Current position in the cleanup queue (0-indexed). */
-let cleanupIndex = 0;
+/** Number of objects that have confirmed pinned during cleanup. */
+let cleanupPinnedCount = 0;
+
+/** Global timeout timer for the cleanup operation. */
+let cleanupTimer: LLTimerCallback | null = null;
+
+/** Whether the goodbye response is waiting for the next poll. */
+let goodbyePending = false;
 
 /** Random pin for the current patch cycle, signed and passed via REZ_PARAM_STRING. */
 let currentPin = 0;
@@ -165,11 +171,19 @@ function respondPoll(extraHtml = "") {
   }
 }
 
-/** Generates a random pin, signs it, rezzes the named object with the signed start string. */
-function rezWithSignedPin(objectName: string) {
-  currentPin = Math.floor(Math.random() * 2147483646) + 1;
-  const pinStr = `${currentPin}`;
+/** Generates a random pin and its signed start string for bootstrap handshake. */
+function generateSignedPin() {
+  const pin = Math.floor(Math.random() * 2147483646) + 1;
+  const pinStr = `${pin}`;
   const signature = ll.ComputeHash(SECRET + "|" + pinStr, "sha256");
+
+  return { pin, startString: pinStr + "|" + signature };
+}
+
+/** Rezzes the named object with a signed pin start string, sets currentPin/currentObjectId. */
+function rezWithSignedPin(objectName: string) {
+  const { pin, startString } = generateSignedPin();
+  currentPin = pin;
 
   currentObjectId = ll.RezObjectWithParams(objectName, [
     REZ_POS,
@@ -177,8 +191,15 @@ function rezWithSignedPin(objectName: string) {
     1,
     0,
     REZ_PARAM_STRING,
-    pinStr + "|" + signature,
+    startString,
   ]);
+}
+
+/** Schedules self-deletion after a 1s delay so pending responses are delivered. */
+function scheduleSelfDelete() {
+  LLTimers.once(1.0, () => {
+    ll.RemoveInventory(SELF_NAME);
+  });
 }
 
 /**
@@ -294,7 +315,7 @@ function patchNext() {
     }
 
     pushStatus(`Timeout waiting for ${currentObjectName}, derezing.`);
-    ll.DerezObject(currentObjectId, DEREZ_DIE);
+    ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
 
     timeoutTimer = null;
 
@@ -334,62 +355,131 @@ function startPatching(queue: string[], itemFilter?: Record<string, string[]>, r
   patchNext();
 }
 
-/**
- * Advances to the next object in the cleanup queue. Rezzes it with a signed
- * start string, sets up a 10s timeout, and waits for the bootstrap handshake.
- * When the queue is exhausted, calls removeAllInventory() to finish.
- */
-function cleanupNext() {
-  if (cleanupIndex >= cleanupQueue.length) {
-    cleanupQueue = [];
-    cleanupIndex = 0;
-
-    clearStatus();
-    removeAllInventory();
-
-    return;
+/** Finds a cleanup entry by uuid. */
+function findCleanupEntry(id: uuid) {
+  for (const entry of cleanupObjects) {
+    if (entry.id === id) return entry;
   }
 
-  currentObjectName = cleanupQueue[cleanupIndex];
-  cleanupIndex++;
-
-  setStatus(currentObjectName + "\nCleaning up\n[" + cleanupIndex + "/" + cleanupQueue.length + "]");
-
-  pushStatus(`Rezzing ${currentObjectName} for cleanup... [${cleanupIndex}/${cleanupQueue.length}]`);
-
-  rezWithSignedPin(currentObjectName);
-
-  // 10s timeout - cleanup is just a message exchange, no script loading
-  timeoutTimer = LLTimers.once(10, () => {
-    timeoutTimer = null;
-
-    pushStatus(`Timeout waiting for ${currentObjectName}, skipping.`);
-    ll.DerezObject(currentObjectId, DEREZ_DIE);
-
-    cleanupNext();
-  });
+  return undefined;
 }
 
-/** Removes all inventory items except this script, sends goodbye, then self-deletes. */
-function removeAllInventory() {
-  pushStatus("Removing patcher inventory...");
+/**
+ * Rezzes all objects in parallel, sets a global timeout, and waits for
+ * bootstrap "pinned" messages. Once all have pinned (or timeout fires),
+ * sends cleanup to all, derezzes, and verifies.
+ */
+function startCleanup(objectNames: string[]) {
+  finishing = true;
+  busy = true;
+  statusLog = [];
+  cleanupObjects = [];
+  cleanupPinnedCount = 0;
+  completedItems = 0;
 
-  const count = ll.GetInventoryNumber(INVENTORY_ALL);
+  pushStatus(`Cleaning up ${objectNames.length} object(s)...`);
 
-  for (let i = count - 1; i >= 0; i--) {
-    const name = ll.GetInventoryName(INVENTORY_ALL, i);
+  for (const name of objectNames) {
+    const { startString } = generateSignedPin();
 
-    if (name !== SELF_NAME) {
-      ll.RemoveInventory(name);
+    const id = ll.RezObjectWithParams(name, [REZ_POS, new Vector(0, 0, 1), 1, 0, REZ_PARAM_STRING, startString]);
+
+    if (id.istruthy) {
+      cleanupObjects.push({ name, id, pinned: false });
+    } else {
+      pushStatus(`Failed to rez ${name}, skipping.`);
     }
   }
 
+  totalItems = cleanupObjects.length;
+
+  if (cleanupObjects.length === 0) {
+    pushStatus("No objects could be rezzed.");
+    finishCleanup();
+    return;
+  }
+
+  // 15s global timeout for all objects to pin
+  cleanupTimer = LLTimers.once(15, () => {
+    cleanupTimer = null;
+    onAllPinned();
+  });
+}
+
+/** Called when all objects have pinned, or the global timeout fires. */
+function onAllPinned() {
+  if (cleanupTimer) {
+    LLTimers.off(cleanupTimer);
+    cleanupTimer = null;
+  }
+
+  // Send cleanup to pinned objects, log any that didn't respond
+  for (const entry of cleanupObjects) {
+    if (entry.pinned) {
+      ll.RegionSayTo(entry.id, COMM_CHANNEL, "cleanup");
+    } else {
+      pushStatus(`${entry.name} did not respond, derezing.`);
+    }
+  }
+
+  // Wait 3s for bootstrap self-deletion (bootstrap waits 1s), then derez all
+  LLTimers.once(3.0, () => {
+    for (const entry of cleanupObjects) {
+      ll.DerezObject(entry.id, DEREZ_TO_INVENTORY);
+    }
+
+    verifyDerez(0);
+  });
+}
+
+/** Polls to verify all objects have been derezzed back to inventory. */
+function verifyDerez(attempt: number) {
+  let allGone = true;
+
+  for (const entry of cleanupObjects) {
+    const details = ll.GetObjectDetails(entry.id, [OBJECT_NAME]);
+
+    if (details.length > 0) {
+      allGone = false;
+      break;
+    }
+  }
+
+  if (allGone || attempt >= 4) {
+    if (!allGone) {
+      for (const entry of cleanupObjects) {
+        const details = ll.GetObjectDetails(entry.id, [OBJECT_NAME]);
+
+        if (details.length > 0) {
+          pushStatus(`Warning: ${entry.name} may not have been derezzed.`);
+        }
+      }
+    }
+
+    finishCleanup();
+  } else {
+    LLTimers.once(1.5, () => {
+      verifyDerez(attempt + 1);
+    });
+  }
+}
+
+/** Cleanup complete: clear state, send goodbye, schedule self-delete. */
+function finishCleanup() {
+  cleanupObjects = [];
+  cleanupPinnedCount = 0;
+  finishing = false;
+  busy = false;
+
+  clearStatus();
   logStatus("Cleanup complete. Goodbye!");
 
-  // Send final poll response with goodbye OOB swap before self-deleting
-  respondPoll(GOODBYE_FRAGMENT);
-
-  ll.RemoveInventory(SELF_NAME);
+  if (pollRequestId !== "") {
+    respondPoll(GOODBYE_FRAGMENT);
+    scheduleSelfDelete();
+  } else {
+    goodbyePending = true;
+  }
 }
 
 /** Releases the current HTTP-in URL and requests a new one. */
@@ -442,6 +532,15 @@ LLEvents.on("http_request", (requestId, method, body) => {
     } else if (url === "/objects") {
       respondHtml(requestId, buildObjectList(SELF_NAME));
     } else if (url === "/poll") {
+      // Goodbye was pending while no poll was held — deliver it now
+      if (goodbyePending) {
+        goodbyePending = false;
+        respondHtml(requestId, statusFragment() + GOODBYE_FRAGMENT);
+        scheduleSelfDelete();
+
+        return;
+      }
+
       // Hold the request for long polling
       if (pollRequestId !== "") {
         // Cancel previous poll -respond to stale request
@@ -509,20 +608,9 @@ LLEvents.on("http_request", (requestId, method, body) => {
         return;
       }
 
-      finishing = true;
-      busy = true;
-      statusLog = [];
-      completedItems = 0;
-
-      cleanupQueue = getObjectNames();
-      cleanupIndex = 0;
-      totalItems = cleanupQueue.length;
-
-      pushStatus(`Cleaning up ${cleanupQueue.length} object(s)...`);
+      startCleanup(getObjectNames());
 
       respondHtml(requestId, statusFragment());
-
-      cleanupNext();
     } else if (url === "/autoupdate") {
       if (parseFormValue(body, "enabled") === "on") {
         enableAutoUpdate();
@@ -583,33 +671,38 @@ LLEvents.on("listen", (channel, _name, id, message) => {
     }
     // Bootstrap protocol
   } else if (channel === COMM_CHANNEL && busy) {
-    if (message === "pinned" && id === currentObjectId) {
-      if (finishing) {
-        // Cleanup mode: tell bootstrap to remove itself
-        ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "cleanup");
-      } else {
-        // Patch mode: transfer inventory using cached scan from patchNext()
-        for (const item of pendingItems) {
-          ll.GiveInventory(currentObjectId, item);
-          completedItems++;
+    if (message === "pinned" && finishing) {
+      // Cleanup mode: match by uuid across parallel rezzed objects
+      const entry = findCleanupEntry(id);
+
+      if (entry && !entry.pinned) {
+        entry.pinned = true;
+        cleanupPinnedCount++;
+        completedItems++;
+
+        logStatus(`${entry.name} pinned. [${cleanupPinnedCount}/${cleanupObjects.length}]`);
+
+        if (cleanupPinnedCount >= cleanupObjects.length) {
+          onAllPinned();
         }
-
-        startParticles(currentObjectId);
-        pendingScriptIdx = 0;
-        loadNextScript();
       }
-    } else if (message === "cleaned" && id === currentObjectId && finishing) {
-      if (timeoutTimer) {
-        LLTimers.off(timeoutTimer);
-        timeoutTimer = null;
+    } else if (message === "pinned" && id === currentObjectId && !finishing) {
+      // Patch mode: transfer inventory using cached scan from patchNext()
+      for (const item of pendingItems) {
+        ll.GiveInventory(currentObjectId, item);
+        completedItems++;
       }
 
-      completedItems++;
-      logStatus(`${currentObjectName} cleaned.`);
+      startParticles(currentObjectId);
+      pendingScriptIdx = 0;
+      loadNextScript();
+    } else if (message === "cleaned" && finishing) {
+      // Just log — derez is batched after all cleanups
+      const entry = findCleanupEntry(id);
 
-      ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
-
-      cleanupNext();
+      if (entry) {
+        logStatus(`${entry.name} cleaned.`);
+      }
       // Transfer complete, derez back to inventory
     } else if (message === "ready" && id === currentObjectId) {
       if (timeoutTimer) {

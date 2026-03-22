@@ -238,6 +238,9 @@ export function pageShell(baseUrl: string, objectName: string) {
               background: var(--background);
               color: var(--foreground);
             }
+
+            dialog { max-width: 400px; width: 90vw; }
+            dialog footer { display: flex; gap: 0.5rem; justify-content: flex-end; }
           `}
         </style>
       </head>
@@ -276,7 +279,7 @@ export function appFragment(objectName: string) {
           <button type="button" hx-post="patch-all" hx-target="#status">
             <i data-lucide="layers"></i> Patch All
           </button>
-          <button type="button" class="secondary" hx-get="objects" hx-target="#objects">
+          <button type="button" secondary hx-get="objects" hx-target="#objects">
             <i data-lucide="refresh-cw"></i>
           </button>
         </div>
@@ -299,6 +302,40 @@ export function appFragment(objectName: string) {
           Ready
         </div>
       </article>
+
+      <b style="display:block;text-align:center;padding:0.5rem 0" x-data="{ confirm: '' }">
+        <button
+          type="button"
+          style="font-size:0.72rem;color:var(--destructive);padding:0.25rem 0.6rem"
+          secondary
+          {...{ "x-on:click": "$refs.fd.showModal()" }}
+        >
+          {"Remove patcher scripts\u2026"}
+        </button>
+
+        <dialog x-ref="fd" style="text-align:left">
+          <h3 style="margin:0 0 0.75rem;">Remove patcher scripts?</h3>
+          <p>This will remove the bootstrap script from every target object, then delete the patcher script.</p>
+          <p style="margin-bottom:0.25rem;color:var(--foreground);font-weight:600;font-size:0.78rem;">
+            {"Type FINISH to confirm"}
+          </p>
+          <input type="text" x-model="confirm" placeholder="FINISH" autocomplete="off" style="width:100%" />
+          <footer>
+            <button type="button" secondary {...{ "x-on:click": "confirm='';$refs.fd.close()" }}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              hx-post="finish"
+              hx-target="#status"
+              destructive
+              {...{ "x-bind:disabled": "confirm !== 'FINISH'", "x-on:click": "confirm='';$refs.fd.close()" }}
+            >
+              Confirm
+            </button>
+          </footer>
+        </dialog>
+      </b>
     </Fragment>
   );
 }

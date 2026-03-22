@@ -70,7 +70,15 @@ LLEvents:on("listen", function(channel, name, id, message)
       listenHandle = 0
     end
   elseif message == "cleanup" then
+    if listenHandle ~= 0 then
+      ll.ListenRemove(listenHandle)
+      listenHandle = 0
+    end
+
     ll.RegionSayTo(id, COMM_CHANNEL, "cleaned")
-    ll.RemoveInventory(ll.GetScriptName())
+
+    LLTimers:once(1, function()
+      ll.RemoveInventory(ll.GetScriptName())
+    end)
   end
 end)

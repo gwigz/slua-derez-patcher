@@ -236,11 +236,11 @@ export function parseFormItems(body: string) {
 
 /** Goodbye message shown after cleanup finishes. OOB swap replaces `<main>` content. */
 export const GOODBYE_FRAGMENT = (
-  <main hx-swap-oob="innerHTML">
+  <main hx-swap-oob="innerHTML:main">
     <article style="text-align:center;padding:2rem 1rem;">
       <h2>All done!</h2>
       <p style="color:var(--muted-foreground);">
-        All scripts and inventory items have been removed. You can close this page.
+        Bootstrap scripts have been removed from your objects. You can close this page.
       </p>
     </article>
   </main>
