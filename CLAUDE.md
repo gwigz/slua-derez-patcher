@@ -13,15 +13,16 @@ TypeScript project that transpiles to Luau for Second Life's SLua runtime using 
 
 ## Build Pipeline
 
-1. `build.ts` compiles JSX templates (`src/web/template.tsx`) into minified HTML string constants, writes `src/patcher/template.ts` (auto-generated, gitignored)
-2. TSTL bundles `src/patcher/` (including generated `template.ts`) into `dist/patcher.slua`
+1. `build.ts` uses `@gwigz/jsx-inline` to compile `.tsx` templates in `src/patcher/` into minified HTML string constants (`.tsx` → `.ts`, auto-generated, gitignored)
+2. TSTL bundles `src/patcher/` (including generated `.ts` files) into `dist/patcher.slua`, with `@gwigz/tstl-bundle-flatten` for export elimination
 3. Bootstrap compiles independently to `dist/bootstrap.slua`
+4. Constants from `src/constants.ts` are injected at the top of both `.slua` files, and StyLua formats the output
 
-`src/web/` files are **build-time only** (run in Bun, never compiled by TSTL). `src/patcher/` files are **runtime** (compiled to Luau by TSTL). Do not put JSX/TSX files in `src/patcher/`.
+`.tsx` files in `src/patcher/` are **build-time only** (compiled by Bun into `.ts` before TSTL runs). `.ts` files in `src/patcher/` are **runtime** (compiled to Luau by TSTL).
 
 ### HTML Templates
 
-In JSX templates, use `<b>` instead of `<span>` for inline non-semantic wrappers (badges, dots, spacers, labels). `<b>` is 4 bytes shorter per element than `<span>` (both open and close tags), which adds up in the minified HTML strings embedded in the Lua bundle. A global `b { font-weight: inherit; }` reset neutralizes the bold default so `<b>` behaves like `<span>`.
+In `.tsx` templates, use `<b>` instead of `<span>` for inline non-semantic wrappers (badges, dots, spacers, labels). `<b>` is 4 bytes shorter per element than `<span>` (both open and close tags), which adds up in the minified HTML strings that `@gwigz/jsx-inline` embeds in the Lua bundle. A global `b { font-weight: inherit; }` reset neutralizes the bold default so `<b>` behaves like `<span>`.
 
 ## Writing TypeScript for SLua
 
@@ -50,28 +51,22 @@ LLTimers.once(2.0, (scheduled) => { ... });
 
 ### Auto-Transformed Patterns
 
-The plugin rewrites these TypeScript idioms into optimized Luau:
+Write standard TypeScript. The plugin rewrites these idioms to optimized Luau automatically:
 
-| TypeScript              | Compiles to                                 |
-| ----------------------- | ------------------------------------------- |
-| `JSON.stringify(v)`     | `lljson.encode(v)`                          |
-| `JSON.parse(s)`         | `lljson.decode(s)`                          |
-| `btoa(s)` / `atob(s)`   | `llbase64.encode(s)` / `llbase64.decode(s)` |
-| `str.toUpperCase()`     | `ll.ToUpper(str)`                           |
-| `str.toLowerCase()`     | `ll.ToLower(str)`                           |
-| `str.trim()`            | `ll.StringTrim(str, STRING_TRIM)`           |
-| `str.indexOf(x)`        | `ll.SubStringIndex(str, x)`                 |
-| `str.includes(x)`       | `string.find(str, x, 1, true) ~= nil`       |
-| `str.startsWith(x)`     | `string.find(str, x, 1, true) == 1`         |
-| `str.split(sep)`        | `string.split(str, sep)`                    |
-| `str.repeat(n)`         | `string.rep(str, n)`                        |
-| `str.replaceAll(a, b)`  | `ll.ReplaceSubString(str, a, b, 0)`         |
-| `str.substring(s, e)`   | `string.sub(str, s + 1, e)`                 |
-| `arr.includes(v)`       | `table.find(arr, v) ~= nil`                 |
-| `arr.indexOf(v)`        | `(table.find(arr, v) or 0) - 1`             |
-| `Math.floor(a / b)`     | `a // b`                                    |
-| `a & b`, `a \| b`, etc. | `bit32.band(a, b)`, `bit32.bor(a, b)`, etc. |
-| `(a & b) !== 0`         | `bit32.btest(a, b)`                         |
+- `JSON.stringify(v)` / `JSON.parse(s)` - `lljson.encode` / `lljson.decode`
+- `btoa(s)` / `atob(s)` - `llbase64.encode` / `llbase64.decode`
+- `str.toUpperCase()` / `str.toLowerCase()` - `ll.ToUpper` / `ll.ToLower`
+- `str.trim()` - `ll.StringTrim`
+- `str.indexOf(x)` - `ll.SubStringIndex`
+- `str.includes(x)` / `str.startsWith(x)` - `string.find` patterns
+- `str.split(sep)` - `string.split`
+- `str.repeat(n)` - `string.rep`
+- `str.replaceAll(a, b)` - `ll.ReplaceSubString`
+- `str.substring(s, e)` - `string.sub` (auto-adjusts to 1-based indexing)
+- `arr.includes(v)` / `arr.indexOf(v)` - `table.find` patterns
+- `Math.floor(a / b)` - `a // b` (integer division)
+- `a & b`, `a | b`, etc. - `bit32.band`, `bit32.bor`, etc.
+- `(a & b) !== 0` - `bit32.btest`
 
 ### Core Types
 
