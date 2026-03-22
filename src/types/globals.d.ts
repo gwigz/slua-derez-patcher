@@ -1,5 +1,8 @@
 // Auto-generated from constants.ts -- run `bun dev` to update
 
+/** Inventory name of the bootstrap script for auto-upgrade. */
+declare const BOOTSTRAP_NAME: string;
+
 /** Owner chat channel for commands (patcher only). */
 declare const CMD_CHANNEL: number;
 
@@ -8,3 +11,6 @@ declare const COMM_CHANNEL: number;
 
 /** Shared secret for signing dynamic script access pins. */
 declare const SECRET: string;
+
+/** Protocol version, included in the "pinned" handshake. */
+declare const VERSION: string;

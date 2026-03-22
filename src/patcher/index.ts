@@ -20,6 +20,7 @@
  *   5. Bootstrap clears pin, confirms with "ready"
  *   6. Patcher derezzes object back to inventory
  *
+ * @version 0.1.0
  * @link https://github.com/gwigz/slua-derez-patcher
  */
 import { getItemsForObject, getObjectNames, targetItemName } from "./inventory";
@@ -70,6 +71,9 @@ let totalItems = 0;
 
 /** Number of items transferred so far across all objects. */
 let completedItems = 0;
+
+/** Whether the bootstrap in the current object was upgraded this cycle. */
+let bootstrapUpgraded = false;
 
 /** Whether a patch operation is in progress. Prevents concurrent patching. */
 let busy = false;
@@ -280,15 +284,28 @@ function patchNext() {
     }
 
     clearStatus();
-    pushStatus("All objects patched.");
+
+    if (completedItems >= totalItems) {
+      pushStatus("All objects patched.");
+    } else if (completedItems === 0) {
+      pushStatus("Patching failed. All transfers timed out.");
+    } else {
+      pushStatus(`Patching complete. ${completedItems}/${totalItems} item(s) transferred.`);
+    }
 
     return;
   }
 
-  currentObjectName = patchQueue[queueIndex];
+  const nextName = patchQueue[queueIndex];
+
+  if (nextName !== currentObjectName) {
+    bootstrapUpgraded = false;
+  }
+
+  currentObjectName = nextName;
   queueIndex++;
 
-  // Cache inventory scan -reused by the "pinned" handler to avoid a second scan
+  // Cache inventory scan — reused by the "pinned" handler to avoid a second scan
   const { scripts, items } = getItemsForObject(SELF_NAME, currentObjectName);
 
   // Apply per-item filter if this object has a specific selection
@@ -340,9 +357,10 @@ function patchNext() {
     }
 
     // Prevent late "removed" messages from being processed after timeout
+    const skipped = pendingItems.length - pendingItemIdx + (pendingScripts.length - pendingScriptIdx);
     pendingItemIdx = pendingItems.length;
 
-    pushStatus(`Timeout waiting for ${currentObjectName}, derezing.`);
+    pushStatus(`Timeout waiting for ${currentObjectName} (${skipped} item(s) skipped), derezing.`);
     ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
 
     timeoutTimer = null;
@@ -357,6 +375,7 @@ function startPatching(queue: string[], itemFilter?: Record<string, string[]>, r
   patchItemFilter = itemFilter || {};
   queueIndex = 0;
   completedItems = 0;
+  bootstrapUpgraded = false;
   busy = true;
 
   // Pre-calculate total items across all queued objects
@@ -556,7 +575,7 @@ LLEvents.on("http_request", (requestId, method, body) => {
       // Inject runtime base URL so relative hx-get/hx-post paths resolve correctly
       respondHtml(requestId, pageShell(httpUrl, ll.GetObjectName()));
     } else if (url === "/app") {
-      respondHtml(requestId, appFragment(ll.GetObjectName()));
+      respondHtml(requestId, appFragment());
     } else if (url === "/objects") {
       respondHtml(requestId, buildObjectList(SELF_NAME));
     } else if (url === "/poll") {
@@ -571,18 +590,23 @@ LLEvents.on("http_request", (requestId, method, body) => {
 
       // Hold the request for long polling
       if (pollRequestId !== "") {
-        // Cancel previous poll -respond to stale request
-        respondHtml(pollRequestId as unknown as uuid, statusFragment());
+        // Cancel previous poll — respond WITHOUT poll trigger to prevent
+        // two concurrent poll chains from cascading into rapid-fire requests
+        respondHtml(
+          pollRequestId as unknown as uuid,
+          buildStatusFragment(busy || finishing, completedItems, totalItems, statusLog),
+        );
+
+        if (pollTimer) {
+          LLTimers.off(pollTimer);
+          pollTimer = null;
+        }
       }
 
       pollRequestId = requestId as unknown as string;
 
-      if (pollTimer) {
-        LLTimers.off(pollTimer);
-      }
-
-      // 20s timeout -stay under SL's 30s HTTP-in limit
-      pollTimer = LLTimers.once(20, () => {
+      // 25s timeout, stay under SL's 30s HTTP-in limit
+      pollTimer = LLTimers.once(25, () => {
         pollTimer = null;
 
         respondPoll();
@@ -640,13 +664,22 @@ LLEvents.on("http_request", (requestId, method, body) => {
 
       respondHtml(requestId, statusFragment());
     } else if (url === "/autoupdate") {
-      if (parseFormValue(body, "enabled") === "on") {
+      const enabling = parseFormValue(body, "enabled") === "on";
+
+      if (enabling) {
         enableAutoUpdate();
       } else {
         disableAutoUpdate();
       }
 
-      respondHtml(requestId, buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds()));
+      const html = buildAutoUpdateControls(isAutoUpdateEnabled(), getDebounceSeconds());
+
+      // Respond to any held poll so the cycle reflects the new state
+      if (pollRequestId !== "") {
+        respondPoll();
+      }
+
+      respondHtml(requestId, html);
     } else if (url === "/autoupdate-debounce") {
       const seconds = tonumber(parseFormValue(body, "debounce") || "");
 
@@ -699,7 +732,7 @@ LLEvents.on("listen", (channel, _name, id, message) => {
     }
     // Bootstrap protocol
   } else if (channel === COMM_CHANNEL && busy) {
-    if (message === "pinned" && finishing) {
+    if ((message === "pinned" || message.startsWith("pinned|")) && finishing) {
       // Cleanup mode: match by uuid across parallel rezzed objects
       const entry = findCleanupEntry(id);
 
@@ -714,10 +747,39 @@ LLEvents.on("listen", (channel, _name, id, message) => {
           onAllPinned();
         }
       }
-    } else if (message === "pinned" && id === currentObjectId && !finishing) {
-      startParticles(currentObjectId);
-      pendingItemIdx = 0;
-      giveNextItem();
+    } else if ((message === "pinned" || message.startsWith("pinned|")) && id === currentObjectId && !finishing) {
+      if (message === "pinned") {
+        // Old bootstrap without version — attempt auto-upgrade
+        if (timeoutTimer) {
+          LLTimers.off(timeoutTimer);
+          timeoutTimer = null;
+        }
+
+        const hasBootstrap = ll.GetInventoryType(BOOTSTRAP_NAME) === INVENTORY_SCRIPT;
+
+        if (!bootstrapUpgraded && hasBootstrap) {
+          bootstrapUpgraded = true;
+          pushStatus(`Upgrading bootstrap in ${currentObjectName}...`);
+          ll.RemoteLoadScriptPin(currentObjectId, BOOTSTRAP_NAME, currentPin, 1, 0);
+          ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
+          queueIndex--;
+          LLTimers.once(1.0, () => patchNext());
+        } else {
+          const hint = !hasBootstrap ? ' Add "bootstrap" script to auto-upgrade.' : "";
+          pushStatus(`Outdated bootstrap in ${currentObjectName}, skipping.${hint}`);
+          ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
+          patchNext();
+        }
+      } else {
+        // Versioned "pinned|..." — current bootstrap
+        if (bootstrapUpgraded) {
+          pushStatus(`Bootstrap upgraded in ${currentObjectName}.`);
+        }
+
+        startParticles(currentObjectId);
+        pendingItemIdx = 0;
+        giveNextItem();
+      }
     } else if (message === "removed" && id === currentObjectId && !finishing && pendingItemIdx < pendingItems.length) {
       const item = pendingItems[pendingItemIdx];
       ll.GiveInventory(currentObjectId, item);

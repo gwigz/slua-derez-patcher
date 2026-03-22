@@ -8,6 +8,7 @@
  * transferred, it clears the pin and replies "ready" so the patcher can
  * derez the object back to inventory.
  *
+ * @version 0.1.0
  * @link https://github.com/gwigz/slua-derez-patcher
  */
 
@@ -41,7 +42,7 @@ LLEvents.on("on_rez", () => {
 
   listenHandle = ll.Listen(COMM_CHANNEL, "", NULL_KEY as unknown as uuid, "");
 
-  ll.RegionSay(COMM_CHANNEL, "pinned");
+  ll.RegionSay(COMM_CHANNEL, "pinned|" + VERSION);
 });
 
 LLEvents.on("listen", (channel, name, id, message) => {
@@ -67,7 +68,9 @@ LLEvents.on("listen", (channel, name, id, message) => {
     patcherId = NULL_KEY as unknown as uuid;
   } else if (message.startsWith("remove|")) {
     const itemName = message.substring(7);
-    ll.RemoveInventory(itemName);
+    if (ll.GetInventoryType(itemName) !== INVENTORY_NONE) {
+      ll.RemoveInventory(itemName);
+    }
     ll.RegionSayTo(id, COMM_CHANNEL, "removed");
   } else if (message === "cleanup") {
     ll.SetRemoteScriptAccessPin(0);
