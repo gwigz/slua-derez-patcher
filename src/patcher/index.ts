@@ -2,7 +2,7 @@
  * SLua Derez Patcher — bulk inventory updater for Second Life objects
  *
  * Place this script inside a prim alongside the objects you want to patch.
- * Each object must contain a copy of the bootstrap script (bootstrap.slua).
+ * Each object must contain a copy of the bootstrap script (patcher-bootstrap.slua).
  * Scripts and items in the prim's inventory are matched to objects by naming
  * convention, see inventory.ts for details.
  *
@@ -26,6 +26,7 @@
 import { getItemsForObject, getObjectNames, targetItemName } from "./inventory";
 import { setStatus, clearStatus, startParticles, stopParticles } from "./effects";
 import { pageShell, appFragment } from "./template";
+
 import {
   buildObjectList,
   buildStatusFragment,
@@ -35,6 +36,7 @@ import {
   buildAutoUpdateControls,
   NO_ITEMS_SELECTED,
 } from "./ui";
+
 import {
   setup as setupAutoUpdate,
   onInventoryChanged,
@@ -112,6 +114,23 @@ let pendingItemIdx = 0;
 /** Timer handle for sequential script loading, cleared on completion or timeout. */
 let scriptLoadTimer: LLTimerCallback | null = null;
 
+// --- Worker state (parallel script loading) ---
+
+/** Discovered worker indices extracted from inventory names (e.g. [1, 2, 3]). */
+let workerIndices: number[] = [];
+
+/** Shared linkset channel for worker communication, derived at runtime. */
+let workerChannel = 0;
+
+/** Per-worker busy flags, positionally matched to workerIndices. */
+let workerBusy: boolean[] = [];
+
+/** Queue of script names waiting to be dispatched to workers. */
+let workerPendingQueue: string[] = [];
+
+/** Random nonce for the current object's pin derivation. */
+let currentNonce: uuid;
+
 // --- HTTP state ---
 
 /** The HTTP-in URL assigned by the simulator. */
@@ -180,11 +199,112 @@ function respondPoll(extraHtml = "") {
 
 /** Generates a random pin and its signed start string for bootstrap handshake. */
 function generateSignedPin() {
-  const pin = Math.floor(Math.random() * 2147483646) + 1;
+  let pin: number;
+
+  if (WORKERS_ENABLED && workerIndices.length > 0) {
+    // Nonce-based: workers derive the same pin from the nonce
+    currentNonce = ll.GenerateKey();
+    pin = derivePin(currentNonce);
+  } else {
+    pin = Math.floor(Math.random() * 2147483646) + 1;
+  }
+
   const pinStr = `${pin}`;
   const signature = ll.ComputeHash(SECRET + "|" + pinStr, "sha256");
 
   return { pin, startString: pinStr + "|" + signature };
+}
+
+/** Derives a deterministic pin from a nonce, used for worker-based parallel loading. */
+function derivePin(nonce: uuid): number {
+  const hash = ll.ComputeHash(SECRET + "|" + nonce, "sha256");
+  return (tonumber(hash.substring(0, 8), 16)! % 2147483646) + 1;
+}
+
+/** Computes the shared worker channel from SECRET and the linkset root key. */
+function computeWorkerChannel(): number {
+  const hash = ll.ComputeHash(SECRET + "|worker|" + ll.GetLinkKey(1), "md5");
+  return -tonumber(hash.substring(0, 7), 16)!;
+}
+
+/** Scans inventory for patcher-worker[N] scripts and returns their indices. */
+function discoverWorkers(): number[] {
+  if (!WORKERS_ENABLED) return [];
+
+  const indices: number[] = [];
+  const total = ll.GetInventoryNumber(INVENTORY_SCRIPT);
+
+  for (let i = 0; i < total; i++) {
+    const name = ll.GetInventoryName(INVENTORY_SCRIPT, i);
+
+    if (name.startsWith("patcher-worker[")) {
+      const idx = tonumber(name.substring(15, name.length - 1));
+
+      if (idx !== undefined) {
+        indices.push(idx);
+      }
+    }
+  }
+
+  return indices;
+}
+
+/** Signs a payload with a truncated keyed SHA256 hash. */
+function signMessage(payload: string): string {
+  return ll.ComputeHash(SECRET + "|" + payload, "sha256").substring(0, 16);
+}
+
+/** Verifies a truncated keyed hash signature on a payload. */
+function verifyMessage(payload: string, sig: string): boolean {
+  return ll.ComputeHash(SECRET + "|" + payload, "sha256").substring(0, 16) === sig;
+}
+
+/** Sends a load command to a worker by its position in workerIndices. */
+function dispatchToWorker(pos: number, script: string) {
+  workerBusy[pos] = true;
+
+  const idx = workerIndices[pos];
+  const payload = "load|" + idx + "|" + script + "|" + currentNonce + "|" + currentObjectId;
+  const sig = signMessage(payload);
+
+  ll.MessageLinked(
+    LINK_THIS,
+    workerChannel,
+    "load|" + idx + "|" + script + "|" + currentNonce + "|" + sig,
+    currentObjectId,
+  );
+}
+
+/** Handles a worker completion: marks idle, dispatches next script or finishes. */
+function onWorkerDone(idx: number, script: string) {
+  const pos = workerIndices.indexOf(idx);
+  if (pos < 0) return;
+
+  workerBusy[pos] = false;
+  completedItems++;
+
+  const name = targetItemName(script);
+  pushStatus(`Loaded ${name} into ${currentObjectName}`);
+
+  // Dispatch next pending script to this worker
+  if (workerPendingQueue.length > 0) {
+    const next = workerPendingQueue.shift()!;
+    const nextName = targetItemName(next);
+
+    setStatus(currentObjectName + "\nLoading " + nextName + "\n[" + completedItems + "/" + totalItems + "]");
+
+    dispatchToWorker(pos, next);
+    return;
+  }
+
+  // Check if all workers are idle (all scripts done)
+  for (let i = 0; i < workerIndices.length; i++) {
+    if (workerBusy[i]) return;
+  }
+
+  // All scripts loaded
+  stopParticles();
+  ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done");
 }
 
 /** Rezzes the named object with a signed pin start string, sets currentPin/currentObjectId. */
@@ -232,9 +352,8 @@ function giveNextItem() {
 }
 
 /**
- * Loads pending scripts one at a time using a timer chain.
- * Yields to the event loop between loads so the browser can re-establish
- * its long poll and receive real-time progress updates.
+ * Loads pending scripts one at a time using a timer chain, or dispatches
+ * to workers in parallel when available.
  */
 function loadNextScript() {
   if (pendingScriptIdx >= pendingScripts.length) {
@@ -243,6 +362,66 @@ function loadNextScript() {
     return;
   }
 
+  // --- Parallel dispatch via workers ---
+  if (WORKERS_ENABLED && workerIndices.length > 0) {
+    const remaining = pendingScripts.length - pendingScriptIdx;
+
+    // Build queue from remaining scripts
+    workerPendingQueue = [];
+    for (let i = pendingScriptIdx; i < pendingScripts.length; i++) {
+      workerPendingQueue.push(pendingScripts[i]);
+    }
+
+    // Dispatch up to one script per worker
+    const dispatching = Math.min(workerIndices.length, workerPendingQueue.length);
+    for (let w = 0; w < dispatching; w++) {
+      const script = workerPendingQueue.shift()!;
+      const name = targetItemName(script);
+
+      setStatus(currentObjectName + "\nLoading " + name + "\n[" + completedItems + "/" + totalItems + "]");
+      pushStatus(`Loading ${name} into ${currentObjectName}`);
+
+      dispatchToWorker(w, script);
+    }
+
+    // If more scripts than workers, patcher also loads one (acts as W+1th loader)
+    if (remaining > workerIndices.length) {
+      const script = workerPendingQueue.shift()!;
+      const name = targetItemName(script);
+
+      setStatus(currentObjectName + "\nLoading " + name + "\n[" + completedItems + "/" + totalItems + "]");
+      pushStatus(`Loading ${name} into ${currentObjectName}`);
+
+      ll.RemoteLoadScriptPin(currentObjectId, script, currentPin, 1, 0);
+      completedItems++;
+
+      // After the blocking call returns, check if more scripts need patcher help
+      if (workerPendingQueue.length > 0) {
+        // Check if there are scripts that workers haven't picked up yet
+        // (workers may have finished and pulled from queue via onWorkerDone)
+        let anyBusy = false;
+        for (let i = 0; i < workerIndices.length; i++) {
+          if (workerBusy[i]) {
+            anyBusy = true;
+            break;
+          }
+        }
+
+        if (!anyBusy && workerPendingQueue.length === 0) {
+          // All done
+          stopParticles();
+          ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done");
+        }
+        // Otherwise workers are still running, they'll finish via onWorkerDone
+      }
+    }
+
+    // Mark all scripts as consumed so sequential path doesn't re-process
+    pendingScriptIdx = pendingScripts.length;
+    return;
+  }
+
+  // --- Sequential fallback (no workers) ---
   const script = pendingScripts[pendingScriptIdx];
   const name = targetItemName(script);
 
@@ -305,7 +484,7 @@ function patchNext() {
   currentObjectName = nextName;
   queueIndex++;
 
-  // Cache inventory scan — reused by the "pinned" handler to avoid a second scan
+  // Cache inventory scan, reused by the "pinned" handler to avoid a second scan
   const { scripts, items } = getItemsForObject(SELF_NAME, currentObjectName);
 
   // Apply per-item filter if this object has a specific selection
@@ -345,8 +524,10 @@ function patchNext() {
 
   rezWithSignedPin(currentObjectName);
 
-  // 3.5s per script (RemoteLoadScriptPin delay) + 1.5s per item (remove/give round-trip) + 10s buffer
-  const timeoutSeconds = pendingScripts.length * 3.5 + pendingItems.length * 1.5 + 10;
+  // Calculate timeout: with workers, scripts load in parallel batches
+  const effectiveLoaders = WORKERS_ENABLED && workerIndices.length > 0 ? workerIndices.length + 1 : 1;
+  const scriptBatches = Math.ceil(pendingScripts.length / effectiveLoaders);
+  const timeoutSeconds = scriptBatches * 3.5 + pendingItems.length * 1.5 + 10;
 
   timeoutTimer = LLTimers.once(timeoutSeconds, () => {
     stopParticles();
@@ -354,6 +535,12 @@ function patchNext() {
     if (scriptLoadTimer) {
       LLTimers.off(scriptLoadTimer);
       scriptLoadTimer = null;
+    }
+
+    // Clear worker state on timeout
+    workerPendingQueue = [];
+    for (let i = 0; i < workerIndices.length; i++) {
+      workerBusy[i] = false;
     }
 
     // Prevent late "removed" messages from being processed after timeout
@@ -590,7 +777,7 @@ LLEvents.on("http_request", (requestId, method, body) => {
 
       // Hold the request for long polling
       if (pollRequestId !== "") {
-        // Cancel previous poll — respond WITHOUT poll trigger to prevent
+        // Cancel previous poll, respond WITHOUT poll trigger to prevent
         // two concurrent poll chains from cascading into rapid-fire requests
         respondHtml(
           pollRequestId as unknown as uuid,
@@ -749,7 +936,7 @@ LLEvents.on("listen", (channel, _name, id, message) => {
       }
     } else if ((message === "pinned" || message.startsWith("pinned|")) && id === currentObjectId && !finishing) {
       if (message === "pinned") {
-        // Old bootstrap without version — attempt auto-upgrade
+        // Old bootstrap without version, attempt auto-upgrade
         if (timeoutTimer) {
           LLTimers.off(timeoutTimer);
           timeoutTimer = null;
@@ -759,21 +946,21 @@ LLEvents.on("listen", (channel, _name, id, message) => {
 
         if (!bootstrapUpgraded && hasBootstrap) {
           bootstrapUpgraded = true;
-          pushStatus(`Upgrading bootstrap in ${currentObjectName}...`);
+          pushStatus(`Upgrading patcher-bootstrap in ${currentObjectName}...`);
           ll.RemoteLoadScriptPin(currentObjectId, BOOTSTRAP_NAME, currentPin, 1, 0);
           ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
           queueIndex--;
           LLTimers.once(1.0, () => patchNext());
         } else {
-          const hint = !hasBootstrap ? ' Add "bootstrap" script to auto-upgrade.' : "";
-          pushStatus(`Outdated bootstrap in ${currentObjectName}, skipping.${hint}`);
+          const hint = !hasBootstrap ? ` Add "${BOOTSTRAP_NAME}" script to auto-upgrade.` : "";
+          pushStatus(`Outdated patcher-bootstrap in ${currentObjectName}, skipping.${hint}`);
           ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY);
           patchNext();
         }
       } else {
-        // Versioned "pinned|..." — current bootstrap
+        // Versioned "pinned|...", current bootstrap
         if (bootstrapUpgraded) {
-          pushStatus(`Bootstrap upgraded in ${currentObjectName}.`);
+          pushStatus(`Patcher-bootstrap upgraded in ${currentObjectName}.`);
         }
 
         startParticles(currentObjectId);
@@ -816,8 +1003,36 @@ LLEvents.on("listen", (channel, _name, id, message) => {
   }
 });
 
+// --- Worker response handler ---
+
+if (WORKERS_ENABLED) {
+  LLEvents.on("link_message", (_sender, num, str, key) => {
+    if (num !== workerChannel || !busy || finishing) return;
+
+    const parts = (str as string).split("|");
+    if (parts.length < 4 || parts[0] !== "done") return;
+
+    const idx = tonumber(parts[1]);
+    if (idx === undefined || !workerIndices.includes(idx)) return;
+
+    const scriptName = parts[2];
+    const signature = parts[3];
+    const targetId = key as unknown as uuid;
+
+    // Verify signature: sign("done|" + idx + "|" + scriptName + "|" + targetObjectId)
+    const expectedPayload = "done|" + parts[1] + "|" + scriptName + "|" + targetId;
+    if (!verifyMessage(expectedPayload, signature)) return;
+
+    onWorkerDone(idx, scriptName);
+  });
+}
+
 LLEvents.on("on_rez", () => {
   refreshUrl();
+
+  if (WORKERS_ENABLED && workerIndices.length > 0) {
+    workerChannel = computeWorkerChannel();
+  }
 });
 
 LLEvents.on("attach", () => {
@@ -827,6 +1042,8 @@ LLEvents.on("attach", () => {
 LLEvents.on("changed", (change) => {
   if ((change & CHANGED_INVENTORY) !== 0) {
     onInventoryChanged();
+
+    workerIndices = discoverWorkers();
   }
 
   if ((change & (CHANGED_REGION | CHANGED_REGION_START)) !== 0) {
@@ -838,6 +1055,20 @@ ll.Listen(CMD_CHANNEL, "", NULL_KEY, "");
 ll.Listen(COMM_CHANNEL, "", NULL_KEY, "");
 
 ll.RequestURL();
+
+// Initialize worker system
+workerIndices = discoverWorkers();
+
+if (workerIndices.length > 0) {
+  workerChannel = computeWorkerChannel();
+  workerBusy = [];
+
+  for (let i = 0; i < workerIndices.length; i++) {
+    workerBusy.push(false);
+  }
+
+  ll.OwnerSay(`Workers: ${workerIndices.length} patcher-worker script(s) detected.`);
+}
 
 setupAutoUpdate(SELF_NAME, startPatching, () => busy, pushStatus);
 

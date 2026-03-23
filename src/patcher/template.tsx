@@ -214,7 +214,9 @@ export function appFragment() {
         <dialog align="left" x-ref="fd">
           <header>
             <h3>Remove patcher scripts?</h3>
-            <p>This will remove the bootstrap script from every target object, then delete the patcher script.</p>
+            <p>
+              This will remove the patcher-bootstrap script from every target object, then delete the patcher script.
+            </p>
           </header>
           <div stack="xs">
             <label for="confirmText">Type FINISH to confirm</label>

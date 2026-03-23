@@ -14,3 +14,6 @@ declare const SECRET: string;
 
 /** Protocol version, included in the "pinned" handshake. */
 declare const VERSION: string;
+
+/** Enable parallel script loading via patcher-worker scripts. */
+declare const WORKERS_ENABLED: boolean;

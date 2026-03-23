@@ -13,10 +13,11 @@ TypeScript project that transpiles to Luau for Second Life's SLua runtime using 
 
 ## Build Pipeline
 
-1. `build.ts` uses `@gwigz/jsx-inline` to compile `.tsx` templates in `src/patcher/` into minified HTML string constants (`.tsx` → `.ts`, auto-generated, gitignored)
+1. `build.ts` uses `@gwigz/jsx-inline` to compile `.tsx` templates in `src/patcher/` into minified HTML string constants (`.tsx` -> `.ts`, auto-generated, gitignored)
 2. TSTL bundles `src/patcher/` (including generated `.ts` files) into `dist/patcher.slua`, with `@gwigz/tstl-bundle-flatten` for export elimination
-3. Bootstrap compiles independently to `dist/bootstrap.slua`
-4. Constants from `src/constants.ts` are injected at the top of both `.slua` files, and StyLua formats the output
+3. Patcher-bootstrap compiles independently to `dist/patcher-bootstrap.slua`
+4. Worker compiles independently to `dist/patcher-worker.slua`
+5. Constants from `src/constants.ts` are injected at the top of all `.slua` files, and StyLua formats the output
 
 `.tsx` files in `src/patcher/` are **build-time only** (compiled by Bun into `.ts` before TSTL runs). `.ts` files in `src/patcher/` are **runtime** (compiled to Luau by TSTL).
 

@@ -1,7 +1,7 @@
 import type { Diagnostic } from "typescript";
 import * as tstl from "typescript-to-lua";
 import { compile } from "@gwigz/jsx-inline";
-import { watch, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
+import { watch, readFileSync, writeFileSync, unlinkSync, readdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, basename } from "node:path";
 
@@ -140,7 +140,34 @@ async function build() {
   const patcherPath = resolve("dist/patcher.slua");
 
   // Bootstrap standalone
-  const bootstrapResult = tstl.transpileFiles([resolve("src/types/globals.d.ts"), resolve("src/bootstrap.ts")], {
+  const bootstrapResult = tstl.transpileFiles(
+    [resolve("src/types/globals.d.ts"), resolve("src/patcher-bootstrap.ts")],
+    {
+      rootDir: resolve("src"),
+      outDir: resolve("dist"),
+      target: 99, // ESNext
+      module: 99, // ESNext
+      strict: true,
+      moduleDetection: 3, // Force
+      skipLibCheck: true,
+      types: ["@typescript-to-lua/language-extensions", "@gwigz/slua-types"],
+      luaTarget: tstl.LuaTarget.Luau,
+      luaLibImport: tstl.LuaLibImportKind.Inline,
+      extension: "slua",
+      noHeader: true,
+      noImplicitSelf: true,
+      luaPlugins: [{ name: "@gwigz/slua-tstl-plugin", optimize: true }, { name: "@gwigz/tstl-bundle-flatten" }],
+    } as tstl.CompilerOptions,
+  );
+
+  if (reportDiagnostics(bootstrapResult.diagnostics)) {
+    hasErrors = true;
+  }
+
+  const bootstrapPath = resolve("dist/patcher-bootstrap.slua");
+
+  // Worker standalone
+  const workerResult = tstl.transpileFiles([resolve("src/types/globals.d.ts"), resolve("src/worker.ts")], {
     rootDir: resolve("src"),
     outDir: resolve("dist"),
     target: 99, // ESNext
@@ -154,26 +181,30 @@ async function build() {
     extension: "slua",
     noHeader: true,
     noImplicitSelf: true,
-    luaPlugins: [{ name: "@gwigz/slua-tstl-plugin" }, { name: "@gwigz/tstl-bundle-flatten" }],
+    luaPlugins: [{ name: "@gwigz/slua-tstl-plugin", optimize: true }, { name: "@gwigz/tstl-bundle-flatten" }],
   } as tstl.CompilerOptions);
 
-  if (reportDiagnostics(bootstrapResult.diagnostics)) {
+  if (reportDiagnostics(workerResult.diagnostics)) {
     hasErrors = true;
   }
 
-  const bootstrapPath = resolve("dist/bootstrap.slua");
+  // Rename worker output to match expected inventory name
+  renameSync(resolve("dist/worker.slua"), resolve("dist/patcher-worker.slua"));
+
+  const workerPath = resolve("dist/patcher-worker.slua");
 
   if (hasErrors) {
     return false;
   }
 
-  // Step 3: Inject constants at top of both .slua files
+  // Step 3: Inject constants at top of all .slua files
   injectConstants(patcherPath, readFileSync(patcherPath, "utf8"), "src/patcher/index.ts", comments);
-  injectConstants(bootstrapPath, readFileSync(bootstrapPath, "utf8"), "src/bootstrap.ts", comments);
+  injectConstants(bootstrapPath, readFileSync(bootstrapPath, "utf8"), "src/patcher-bootstrap.ts", comments);
+  injectConstants(workerPath, readFileSync(workerPath, "utf8"), "src/worker.ts", comments);
 
   // Step 4: Format .slua output with StyLua
   try {
-    execSync("npx stylua --verify -- dist/patcher.slua dist/bootstrap.slua");
+    execSync("npx stylua --verify -- dist/patcher.slua dist/patcher-bootstrap.slua dist/patcher-worker.slua");
   } catch (e: unknown) {
     console.warn("warning: stylua formatting failed");
     if (e instanceof Error && "stderr" in e) console.warn(String(e.stderr));
@@ -184,7 +215,7 @@ async function build() {
     unlinkSync(tsxPath.replace(/\.tsx$/, ".ts"));
   }
 
-  console.log("Built dist/patcher.slua + dist/bootstrap.slua");
+  console.log("Built dist/patcher.slua + dist/patcher-bootstrap.slua + dist/patcher-worker.slua");
 
   return true;
 }

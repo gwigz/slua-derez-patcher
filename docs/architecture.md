@@ -4,7 +4,7 @@ Technical reference for developers working on the patcher codebase.
 
 ## Patch Protocol
 
-For each selected object, the patcher rezzes it at its own position, waits for the bootstrap script to set a pin and signal back, pushes any inventory items and scripts, then derezzes it back. The browser gets live progress updates via long polling.
+For each selected object, the patcher rezzes it at its own position, waits for the patcher-bootstrap script to set a pin and signal back, pushes any inventory items and scripts, then derezzes it back. The browser gets live progress updates via long polling.
 
 ```mermaid
 sequenceDiagram
@@ -34,11 +34,13 @@ sequenceDiagram
     end
 ```
 
-Scripts have a 3 second delay between each load (`ll.RemoteLoadScriptPin` is throttled by the sim), but non-script inventory transfers via `ll.GiveInventory` are instant. The bootstrap script in each object handles the pin setup and signals readiness -- tweak it if your object needs time to initialize before being taken back.
+Scripts have a 3 second delay between each load (`ll.RemoteLoadScriptPin` is throttled by the sim), but non-script inventory transfers via `ll.GiveInventory` are instant. The patcher-bootstrap script in each object handles the pin setup and signals readiness -- tweak it if your object needs time to initialize before being taken back.
+
+With patcher-worker scripts enabled (`WORKERS_ENABLED = true`), multiple scripts are loaded in parallel. Each worker in the same prim calls `ll.RemoteLoadScriptPin` concurrently, reducing total time from ~N\*3s to ~ceil(N/W)\*3s where W is the number of workers. The patcher also acts as an additional loader when there are more scripts than workers.
 
 ## Finish (Cleanup) Protocol
 
-The finish flow removes bootstrap scripts from all objects and then deletes the patcher. Unlike patching (which is sequential, one object at a time), cleanup rezzes all objects in parallel for speed.
+The finish flow removes patcher-bootstrap scripts from all objects and then deletes the patcher. Unlike patching (which is sequential, one object at a time), cleanup rezzes all objects in parallel for speed.
 
 ```mermaid
 sequenceDiagram
@@ -72,7 +74,7 @@ sequenceDiagram
         Patcher->>ON: cleanup
     end
 
-    par Bootstrap self-deletion (1s delay)
+    par Patcher-bootstrap self-deletion (1s delay)
         O1->>Patcher: cleaned
         O1->>O1: Remove own script
         O2->>Patcher: cleaned
@@ -98,14 +100,53 @@ sequenceDiagram
 
 - **Signed pin handshake**: Prevents unauthorized `ll.RemoteLoadScriptPin` access. The pin is cleared on rez, after patching, and during cleanup so it's never left active.
 - **Sequential patching**: Each object needs multiple round-trips (item removal, script loading), so they are processed one at a time.
-- **Parallel cleanup**: All objects are rezzed at once and each is verified before proceeding. If any step fails, the bootstraps are still intact so the user can retry.
+- **Parallel cleanup**: All objects are rezzed at once and each is verified before proceeding. If any step fails, the patcher-bootstrap scripts are still intact so the user can retry.
+- **Worker-based parallel loading**: Optional patcher-worker scripts in the same prim dispatch `ll.RemoteLoadScriptPin` calls concurrently via signed linkset messages. Pin derivation uses a shared nonce so the pin never appears in messages.
+- **No linkset data**: The patcher does not use `ll.SetLinksetData` -- worker communication if enabled is done via `ll.MessageLinked` to avoid conflicting with other scripts in the linkset that may rely on linkset data.
+
+## Worker Linkset Message Protocol
+
+Workers communicate with the patcher via `ll.MessageLinked` on a shared channel derived at runtime. Messages are signed with truncated keyed SHA256 hashes to prevent spoofing by other scripts in the linkset.
+
+### Channel
+
+Both sides compute the same channel independently:
+
+```
+channel = -tonumber(md5(SECRET + "|worker|" + ll.GetLinkKey(1)).substring(0, 7), 16)
+```
+
+Reset on `on_rez` since the object UUID changes.
+
+### Load (patcher -> worker)
+
+```
+num:  workerChannel
+str:  "load|<workerIdx>|<scriptName>|<nonce>|<signature>"
+key:  targetObjectId
+```
+
+`signature = sha256(SECRET + "|load|" + workerIdx + "|" + scriptName + "|" + nonce + "|" + targetObjectId).substring(0, 16)`
+
+The worker derives the pin deterministically from the nonce (`sha256(SECRET + "|" + nonce)`) so the pin never appears in messages.
+
+### Done (worker -> patcher)
+
+```
+num:  workerChannel
+str:  "done|<workerIdx>|<scriptName>|<signature>"
+key:  targetObjectId
+```
+
+`signature = sha256(SECRET + "|done|" + workerIdx + "|" + scriptName + "|" + targetObjectId).substring(0, 16)`
 
 ## Project Structure
 
 ```
 ├── build.ts                  Build script (template compilation + TSTL)
 ├── src/
-│   ├── bootstrap.ts          Standalone bootstrap script
+│   ├── patcher-bootstrap.ts  Standalone bootstrap script
+│   ├── worker.ts             Standalone worker script (parallel loading)
 │   ├── constants.ts          Shared constants (secret, channels)
 │   └── patcher/
 │       ├── index.ts          Entry point, HTTP-in routing, state, patch flow
@@ -116,7 +157,8 @@ sequenceDiagram
 │       └── autopatch.ts      Auto-patch on inventory changes
 └── dist/
     ├── patcher.slua          Bundled patcher script
-    └── bootstrap.slua        Standalone bootstrap script
+    ├── patcher-bootstrap.slua  Standalone bootstrap script
+    └── patcher-worker.slua   Standalone worker script
 ```
 
 ## Build Pipeline
@@ -126,13 +168,17 @@ flowchart TD
     A["src/patcher/*.tsx"] -->|"@gwigz/jsx-inline"| B["generated .ts files"]
     B --> C["TSTL"]
     D["src/patcher/*.ts"] --> C
-    E["src/bootstrap.ts"] --> C
+    E["src/patcher-bootstrap.ts"] --> C
+    W["src/worker.ts"] --> C
     C -->|"@gwigz/tstl-bundle-flatten"| F["dist/patcher.slua"]
-    C --> G["dist/bootstrap.slua"]
+    C --> G["dist/patcher-bootstrap.slua"]
+    C --> X["dist/patcher-worker.slua"]
     F --> H["build.ts post-process"]
     G --> H
+    X --> H
     H -->|"inject constants, StyLua format"| F
     H -->|"inject constants, StyLua format"| G
+    H -->|"inject constants, StyLua format"| X
 ```
 
 ## JSX Templates
@@ -213,7 +259,7 @@ function buildList(items: string[]) {
 Dynamic expressions (identifiers, function calls, template literals with interpolations) become slots in the concat. Static expressions (string/number/boolean literals, static object literals) are evaluated at build time and baked into the HTML.
 
 > [!NOTE]
-> Inline JSX doesn't support JSX nested inside dynamic expressions (`<div>{flag ? <A/> : <B/>}</div>` -- use `html += flag ? <A/> : <B/>` instead so each branch is a separate root node) or component-style JSX (`<MyComponent />`) since the component function isn't available in the build-time temp file.
+> Inline JSX doesn't support JSX nested inside dynamic expressions (`<div>{flag ? <A/> : <B/>}</div>` -- use `html += flag ? <A/> : <B/>` instead so each branch is a separate root node). Component-style JSX (`<MyComponent />`) works as long as the component function is statically available at build time.
 
 ## Web UI Stack
 
@@ -239,15 +285,15 @@ Everything loads from CDN so the SLua script never serves static assets.
 
 All routes are defined in the `http_request` event handler in `src/patcher/index.ts`.
 
-| Method | Path                   | Description                                   |
-| ------ | ---------------------- | --------------------------------------------- |
-| GET    | `/`                    | Full page shell with base URL injected        |
-| GET    | `/app`                 | App fragment (object list + controls)         |
-| GET    | `/objects`             | Object list with items and checkboxes         |
-| GET    | `/poll`                | Long poll -- held open until status changes   |
-| POST   | `/patch`               | Patch selected objects (form body with items) |
-| POST   | `/patch-all`           | Patch all objects at once                     |
-| POST   | `/finish`              | Remove bootstrap scripts and self-delete      |
-| GET    | `/autoupdate`          | Auto-update controls fragment                 |
-| POST   | `/autoupdate`          | Toggle autoupdate on/off                      |
-| POST   | `/autoupdate-debounce` | Set autoupdate debounce interval              |
+| Method | Path                   | Description                                      |
+| ------ | ---------------------- | ------------------------------------------------ |
+| GET    | `/`                    | Full page shell with base URL injected           |
+| GET    | `/app`                 | App fragment (object list + controls)            |
+| GET    | `/objects`             | Object list with items and checkboxes            |
+| GET    | `/poll`                | Long poll -- held open until status changes      |
+| POST   | `/patch`               | Patch selected objects (form body with items)    |
+| POST   | `/patch-all`           | Patch all objects at once                        |
+| POST   | `/finish`              | Remove patcher-bootstrap scripts and self-delete |
+| GET    | `/autoupdate`          | Auto-update controls fragment                    |
+| POST   | `/autoupdate`          | Toggle autoupdate on/off                         |
+| POST   | `/autoupdate-debounce` | Set autoupdate debounce interval                 |

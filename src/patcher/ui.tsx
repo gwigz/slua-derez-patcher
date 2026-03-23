@@ -195,40 +195,38 @@ export function parseFormItems(body: string) {
   for (const pair of body.split("&")) {
     const eqIdx = pair.indexOf("=");
 
-    if (eqIdx < 0) {
-      // no-continue: TSTL compiles for->while, continue skips increment
-    } else {
-      const key = pair.substring(0, eqIdx);
+    if (eqIdx < 0) continue;
 
-      if (key === "item") {
-        const fullName = urlDecode(pair.substring(eqIdx + 1));
-        const slashIdx = fullName.indexOf("/");
+    const key = pair.substring(0, eqIdx);
 
-        if (slashIdx >= 0) {
-          const prefix = fullName.substring(0, slashIdx);
+    if (key === "item") {
+      const fullName = urlDecode(pair.substring(eqIdx + 1));
+      const slashIdx = fullName.indexOf("/");
 
-          // Pattern prefix like {*-object.obj}, expand to all matching real objects
-          if (prefix.startsWith("{") && prefix.indexOf("}") === prefix.length - 1) {
-            const pattern = prefix.substring(1, prefix.length - 1);
+      if (slashIdx >= 0) {
+        const prefix = fullName.substring(0, slashIdx);
 
-            for (const obj of objects) {
-              if (patternMatches(obj, pattern)) {
-                if (filter[obj] === undefined) {
-                  filter[obj] = [];
-                  queue.push(obj);
-                }
+        // Pattern prefix like {*-object.obj}, expand to all matching real objects
+        if (prefix.startsWith("{") && prefix.indexOf("}") === prefix.length - 1) {
+          const pattern = prefix.substring(1, prefix.length - 1);
 
-                filter[obj].push(fullName);
+          for (const obj of objects) {
+            if (patternMatches(obj, pattern)) {
+              if (filter[obj] === undefined) {
+                filter[obj] = [];
+                queue.push(obj);
               }
-            }
-          } else {
-            if (filter[prefix] === undefined) {
-              filter[prefix] = [];
-              queue.push(prefix);
-            }
 
-            filter[prefix].push(fullName);
+              filter[obj].push(fullName);
+            }
           }
+        } else {
+          if (filter[prefix] === undefined) {
+            filter[prefix] = [];
+            queue.push(prefix);
+          }
+
+          filter[prefix].push(fullName);
         }
       }
     }
@@ -243,7 +241,7 @@ export const GOODBYE_FRAGMENT = (
     <article empty>
       <i data-lucide="circle-check" color="success"></i>
       <h2>All done!</h2>
-      <b>Bootstrap scripts have been removed from your objects, you can close this page</b>
+      <b>Patcher scripts have been removed from your objects, you can close this page</b>
     </article>
   </main>
 );

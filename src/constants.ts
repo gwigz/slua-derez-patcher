@@ -11,4 +11,7 @@ export const CMD_CHANNEL = 7;
 export const VERSION = "v0.1.0";
 
 /** Inventory name of the bootstrap script for auto-upgrade. */
-export const BOOTSTRAP_NAME = "bootstrap";
+export const BOOTSTRAP_NAME = "patcher-bootstrap";
+
+/** Enable parallel script loading via patcher-worker scripts. */
+export const WORKERS_ENABLED = false;

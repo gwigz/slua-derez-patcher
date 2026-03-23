@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/TypeScriptToLua/TypeScriptToLua/master/tsconfig-schema.json",
-  "include": ["src/bootstrap.ts", "src/types/globals.d.ts"],
+  "include": ["src/patcher-bootstrap.ts", "src/types/globals.d.ts"],
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
