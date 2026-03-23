@@ -2,7 +2,7 @@
 SLua Derez Patcher — bulk inventory updater for Second Life objects
 
 Place this script inside a prim alongside the objects you want to patch.
-Each object must contain a copy of the bootstrap script (bootstrap.slua).
+Each object must contain a copy of the bootstrap script (patcher-bootstrap.slua).
 Scripts and items in the prim's inventory are matched to objects by naming
 convention, see inventory.ts for details.
 
@@ -25,7 +25,7 @@ Patch protocol (COMM_CHANNEL):
 ]]
 
 --- Inventory name of the bootstrap script for auto-upgrade.
-local BOOTSTRAP_NAME = "bootstrap"
+local BOOTSTRAP_NAME = "patcher-bootstrap.slua"
 
 --- Owner chat channel for commands (patcher only).
 local CMD_CHANNEL = 7
@@ -35,6 +35,9 @@ local COMM_CHANNEL = -47123
 
 --- Shared secret for signing dynamic script access pins.
 local SECRET = "slua-derez-patcher"
+
+--- Enable parallel script loading via patcher-worker scripts.
+local WORKERS_ENABLED = false
 
 --[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
 
@@ -118,7 +121,7 @@ local function getObjectNames()
 
     while i < count do
       names[#names + 1] = ll.GetInventoryName(INVENTORY_OBJECT, i + 1)
-      i = i + 1
+      i += 1
     end
   end
 
@@ -150,7 +153,7 @@ local function getItemsForObject(selfName, objectName)
         end
       end
 
-      i = i + 1
+      i += 1
     end
   end
 
@@ -197,11 +200,11 @@ function takeSnapshot()
     while i < count do
       local name = ll.GetInventoryName(INVENTORY_ALL, i + 1)
 
-      if name ~= selfName and (string.find(name, "/", 1, true) or 0) - 1 >= 0 then
+      if name ~= selfName and string.find(name, "/", 1, true) then
         snap[name] = ll.GetInventoryKey(name)
       end
 
-      i = i + 1
+      i += 1
     end
   end
 
@@ -334,19 +337,15 @@ local function onInventoryChanged()
       return
     end
 
-    local ____getAffectedObjects_result_0 = getAffectedObjects(changed)
-    local queue = ____getAffectedObjects_result_0.queue
-    local filter = ____getAffectedObjects_result_0.filter
+    local _r0 = getAffectedObjects(changed)
+    local queue, filter = _r0.queue, _r0.filter
 
     if #queue == 0 then
       return
     end
 
     if triggerPatch and pushMsg then
-      pushMsg(
-        ((("Auto-update: " .. tostring(#changed)) .. " item(s) changed, patching ") .. tostring(#queue))
-          .. " object(s)..."
-      )
+      pushMsg(((("Auto-update: " .. #changed) .. " item(s) changed, patching ") .. #queue) .. " object(s)...")
       triggerPatch(queue, filter)
     end
   end)
@@ -426,12 +425,13 @@ local function pageShell(baseUrl, objectName)
 end
 
 local function appFragment()
-  return '<form x-data="patcher"><div row=""><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b spacer=""></b><button type="submit" sm="" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" sm="" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" sm="" secondary="" hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><article id="b" flush="" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="true" align="center"></article></article></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article flush=""><header>Status</header><div id="c" row="">Ready</div></article><div align="center" x-data="{ confirmText: \'\' }"><button type="button" sm="" destructive="" x-on:click="$refs.fd.showModal()">Remove patcher scripts…</button><dialog align="left" x-ref="fd"><header><h3>Remove patcher scripts?</h3><p>This will remove the bootstrap script from every target object, then delete the patcher script.</p></header><div stack="xs"><label for="confirmText">Type FINISH to confirm</label><input type="text" id="confirmText" x-model="confirmText" placeholder="FINISH" autocomplete="off"/></div><footer><button type="button" secondary="" x-on:click="confirmText=\'\';$refs.fd.close()">Cancel</button><button type="button" hx-post="finish" hx-target="#c" destructive="" x-bind:disabled="confirmText.toUpperCase() !== \'FINISH\'" x-on:click="confirmText=\'\';$refs.fd.close()">Confirm</button></footer></dialog></div>'
+  return '<form x-data="patcher"><div row=""><label><input type="checkbox" x-bind:checked="allChecked" x-on:click="toggleAll()"/> All</label><b spacer=""></b><button type="submit" sm="" hx-post="patch" hx-target="#c" x-show="items.length" x-bind:disabled="items.length === 0"><i data-lucide="play"></i> Patch</button><button type="button" sm="" hx-post="patch-all" hx-target="#c"><i data-lucide="layers"></i> Patch All</button><button type="button" sm="" secondary="" hx-get="objects" hx-target="#b"><i data-lucide="refresh-cw"></i></button></div><article id="b" flush="" hx-get="objects" hx-trigger="load" x-on:change="sync()" x-on:htmx:after-swap.camel="sync()"><article aria-busy="true" align="center"></article></article></form><div id="a" hx-get="autoupdate" hx-trigger="load"></div><article flush=""><header>Status</header><div id="c" row="">Ready</div></article><div align="center" x-data="{ confirmText: \'\' }"><button type="button" sm="" destructive="" x-on:click="$refs.fd.showModal()">Remove patcher scripts…</button><dialog align="left" x-ref="fd"><header><h3>Remove patcher scripts?</h3><p>This will remove the patcher-bootstrap script from every target object, then delete the patcher script.</p></header><div stack="xs"><label for="confirmText">Type FINISH to confirm</label><input type="text" id="confirmText" x-model="confirmText" placeholder="FINISH" autocomplete="off"/></div><footer><button type="button" secondary="" x-on:click="confirmText=\'\';$refs.fd.close()">Cancel</button><button type="button" hx-post="finish" hx-target="#c" destructive="" x-bind:disabled="confirmText.toUpperCase() !== \'FINISH\'" x-on:click="confirmText=\'\';$refs.fd.close()">Confirm</button></footer></dialog></div>'
 end
 
 local EMPTY_STATE = '<article empty=""><b>No patchable objects found in inventory.</b></article>'
-
+local STATUS_DONE = "<strong>Done</strong>"
 local POLL_TRIGGER = '<div style="display:none" hx-get="poll" hx-trigger="load" hx-target="#c"></div>'
+local NO_ITEMS_SELECTED = "<strong>No items selected</strong>"
 
 --- Escapes HTML special characters to prevent XSS.
 local function escapeHtml(s)
@@ -473,20 +473,19 @@ local function buildObjectList(selfName)
   local html = ""
 
   for ____, obj in ipairs(objects) do
-    local ____getItemsForObject_result_0 = getItemsForObject(selfName, obj)
-    local scripts = ____getItemsForObject_result_0.scripts
-    local items = ____getItemsForObject_result_0.items
+    local _r1 = getItemsForObject(selfName, obj)
+    local scripts, items = _r1.scripts, _r1.items
 
     if #scripts > 0 or #items > 0 then
       local escaped = escapeHtml(obj)
       local itemsHtml = ""
 
       for ____, script in ipairs(scripts) do
-        itemsHtml = itemsHtml .. buildItemRow(script)
+        itemsHtml ..= buildItemRow(script)
       end
 
       for ____, item in ipairs(items) do
-        itemsHtml = itemsHtml .. buildItemRow(item)
+        itemsHtml ..= buildItemRow(item)
       end
 
       html = html
@@ -520,12 +519,10 @@ local function buildStatusFragment(busy, index, total, log, autoUpdate)
       .. '"></progress>'
   elseif total > 0 then
     html = html
-      .. ((((("" .. "<strong>Done</strong>") .. '<progress value="') .. tostring(total)) .. '" max="') .. tostring(
-        total
-      ))
+      .. ((((("" .. STATUS_DONE) .. '<progress value="') .. tostring(total)) .. '" max="') .. tostring(total))
       .. '"></progress>'
   else
-    html = html .. "<strong>Done</strong>"
+    html ..= STATUS_DONE
   end
 
   if #log > 0 then
@@ -539,7 +536,7 @@ local function buildStatusFragment(busy, index, total, log, autoUpdate)
   end
 
   if busy or autoUpdate then
-    html = html .. POLL_TRIGGER
+    html ..= POLL_TRIGGER
   end
 
   return html
@@ -562,14 +559,14 @@ local function urlDecode(encoded)
 
       if match then
         parts[#parts + 1] = string.char(tonumber(hex, 16))
-        i = i + 3
+        i += 3
       else
         parts[#parts + 1] = ch
-        i = i + 1
+        i += 1
       end
     else
       parts[#parts + 1] = ch
-      i = i + 1
+      i += 1
     end
   end
 
@@ -603,41 +600,42 @@ local function parseFormItems(body)
     local eqIdx = (string.find(pair, "=", 1, true) or 0) - 1
 
     if eqIdx < 0 then
-    else
-      local key = string.sub(pair, 1, eqIdx)
+      continue
+    end
 
-      if key == "item" then
-        local fullName = urlDecode(string.sub(pair, eqIdx + 1 + 1))
-        local slashIdx = (string.find(fullName, "/", 1, true) or 0) - 1
+    local key = string.sub(pair, 1, eqIdx)
 
-        if slashIdx >= 0 then
-          local prefix = string.sub(fullName, 1, slashIdx)
+    if key == "item" then
+      local fullName = urlDecode(string.sub(pair, eqIdx + 1 + 1))
+      local slashIdx = (string.find(fullName, "/", 1, true) or 0) - 1
 
-          if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
-            local pattern = string.sub(prefix, 2, #prefix - 1)
+      if slashIdx >= 0 then
+        local prefix = string.sub(fullName, 1, slashIdx)
 
-            for ____, obj in ipairs(objects) do
-              if patternMatches(obj, pattern) then
-                if filter[obj] == nil then
-                  filter[obj] = {}
-                  queue[#queue + 1] = obj
-                end
+        if string.find(prefix, "{", 1, true) == 1 and (string.find(prefix, "}", 1, true) or 0) - 1 == #prefix - 1 then
+          local pattern = string.sub(prefix, 2, #prefix - 1)
 
-                local ____filter_obj_1 = filter[obj]
-
-                ____filter_obj_1[#____filter_obj_1 + 1] = fullName
+          for ____, obj in ipairs(objects) do
+            if patternMatches(obj, pattern) then
+              if filter[obj] == nil then
+                filter[obj] = {}
+                queue[#queue + 1] = obj
               end
-            end
-          else
-            if filter[prefix] == nil then
-              filter[prefix] = {}
-              queue[#queue + 1] = prefix
-            end
 
-            local ____filter_prefix_2 = filter[prefix]
+              local ____filter_obj_1 = filter[obj]
 
-            ____filter_prefix_2[#____filter_prefix_2 + 1] = fullName
+              ____filter_obj_1[#____filter_obj_1 + 1] = fullName
+            end
           end
+        else
+          if filter[prefix] == nil then
+            filter[prefix] = {}
+            queue[#queue + 1] = prefix
+          end
+
+          local ____filter_prefix_2 = filter[prefix]
+
+          ____filter_prefix_2[#____filter_prefix_2 + 1] = fullName
         end
       end
     end
@@ -648,7 +646,7 @@ end
 
 --- Goodbye message shown after cleanup finishes. OOB swap replaces `<main>` content.
 local GOODBYE_FRAGMENT =
-  '<main hx-swap-oob="innerHTML:main"><article empty=""><i data-lucide="circle-check" color="success"></i><h2>All done!</h2><b>Bootstrap scripts have been removed from your objects, you can close this page</b></article></main>'
+  '<main hx-swap-oob="innerHTML:main"><article empty=""><i data-lucide="circle-check" color="success"></i><h2>All done!</h2><b>Patcher scripts have been removed from your objects, you can close this page</b></article></main>'
 
 --- Builds the autoupdate controls reflecting current server state.
 -- Returned for GET /autoupdate and POST /autoupdate.
@@ -665,7 +663,7 @@ local function buildAutoUpdateControls(enabled, debounce)
     .. '" min="1" max="60" hx-post="autoupdate-debounce" hx-target="#a" hx-trigger="change delay:500ms"/> s</label></div></article>'
 
   if enabled then
-    html = html .. POLL_TRIGGER
+    html ..= POLL_TRIGGER
   end
 
   return html
@@ -678,7 +676,7 @@ local function __TS__ArrayFilter(self, callbackfn, thisArg)
 
   for i = 1, #self do
     if callbackfn(thisArg, self[i], i - 1, self) then
-      len = len + 1
+      len += 1
       result[len] = self[i]
     end
   end
@@ -687,7 +685,7 @@ local function __TS__ArrayFilter(self, callbackfn, thisArg)
 end
 
 -- End of Lua Library inline imports
-local logStatus, pushStatus, statusFragment, respondPoll, generateSignedPin, rezWithSignedPin, scheduleSelfDelete, loadNextScript, patchNext, startPatching, onAllPinned, verifyDerez, finishCleanup, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, bootstrapUpgraded, busy, finishing, cleanupObjects, cleanupPinnedCount, cleanupTimer, goodbyePending, currentPin, timeoutTimer, pendingScripts, pendingItems, pendingScriptIdx, pendingItemIdx, scriptLoadTimer, pollRequestId, pollTimer, statusLog
+local logStatus, pushStatus, statusFragment, respondPoll, generateSignedPin, derivePin, signMessage, dispatchToWorker, rezWithSignedPin, scheduleSelfDelete, loadNextScript, patchNext, startPatching, onAllPinned, verifyDerez, finishCleanup, respondHtml, SELF_NAME, currentObjectId, currentObjectName, patchQueue, patchItemFilter, queueIndex, totalItems, completedItems, bootstrapUpgraded, busy, finishing, cleanupObjects, cleanupPinnedCount, cleanupTimer, goodbyePending, currentPin, timeoutTimer, pendingScripts, pendingItems, pendingScriptIdx, pendingItemIdx, scriptLoadTimer, workerIndices, workerChannel, workerBusy, workerPendingQueue, currentNonce, pollRequestId, pollTimer, statusLog
 local setupAutoUpdate = setup
 local isAutoUpdateEnabled = isEnabled
 local enableAutoUpdate = enable
@@ -733,17 +731,50 @@ function respondPoll(extraHtml)
 end
 
 function generateSignedPin()
-  local pin = math.floor(math.random() * 2147483646) + 1
-  local pinStr = tostring(pin)
+  local pin
+
+  if WORKERS_ENABLED and #workerIndices > 0 then
+    currentNonce = ll.GenerateKey()
+    pin = derivePin(currentNonce)
+  else
+    pin = math.floor(math.random() * 2147483646) + 1
+  end
+
+  local pinStr = pin
   local signature = ll.ComputeHash((SECRET .. "|") .. pinStr, "sha256")
 
   return { pin = pin, startString = (pinStr .. "|") .. signature }
 end
 
+function derivePin(nonce)
+  local hash = ll.ComputeHash((SECRET .. "|") .. tostring(nonce), "sha256")
+
+  return tonumber(string.sub(hash, 1, 8), 16) % 2147483646 + 1
+end
+
+function signMessage(payload)
+  return string.sub(ll.ComputeHash((SECRET .. "|") .. payload, "sha256"), 1, 16)
+end
+
+function dispatchToWorker(pos, script)
+  workerBusy[pos + 1] = true
+
+  local idx = workerIndices[pos + 1]
+  local payload = (((((("load|" .. tostring(idx)) .. "|") .. script) .. "|") .. tostring(currentNonce)) .. "|")
+    .. tostring(currentObjectId)
+  local sig = signMessage(payload)
+
+  ll.MessageLinked(
+    LINK_THIS,
+    workerChannel,
+    (((((("load|" .. tostring(idx)) .. "|") .. script) .. "|") .. tostring(currentNonce)) .. "|") .. sig,
+    currentObjectId
+  )
+end
+
 function rezWithSignedPin(objectName)
-  local ____generateSignedPin_result_0 = generateSignedPin()
-  local pin = ____generateSignedPin_result_0.pin
-  local startString = ____generateSignedPin_result_0.startString
+  local _r2 = generateSignedPin()
+  local pin, startString = _r2.pin, _r2.startString
 
   currentPin = pin
   currentObjectId = ll.RezObjectWithParams(objectName, {
@@ -770,6 +801,83 @@ function loadNextScript()
     return
   end
 
+  if WORKERS_ENABLED and #workerIndices > 0 then
+    local remaining = #pendingScripts - pendingScriptIdx
+
+    workerPendingQueue = {}
+    do
+      local i = pendingScriptIdx
+
+      while i < #pendingScripts do
+        workerPendingQueue[#workerPendingQueue + 1] = pendingScripts[i + 1]
+        i += 1
+      end
+    end
+
+    local dispatching = math.min(#workerIndices, #workerPendingQueue)
+
+    do
+      local w = 0
+
+      while w < dispatching do
+        local script = table.remove(workerPendingQueue, 1)
+        local name = targetItemName(script)
+
+        setStatus(
+          (
+            (((((currentObjectName .. "\nLoading ") .. name) .. "\n[") .. tostring(completedItems)) .. "/")
+            .. tostring(totalItems)
+          ) .. "]"
+        )
+        pushStatus((("Loading " .. name) .. " into ") .. currentObjectName)
+        dispatchToWorker(w, script)
+        w += 1
+      end
+    end
+
+    if remaining > #workerIndices then
+      local script = table.remove(workerPendingQueue, 1)
+      local name = targetItemName(script)
+
+      setStatus(
+        (
+          (((((currentObjectName .. "\nLoading ") .. name) .. "\n[") .. tostring(completedItems)) .. "/")
+          .. tostring(totalItems)
+        ) .. "]"
+      )
+      pushStatus((("Loading " .. name) .. " into ") .. currentObjectName)
+
+      ll.RemoteLoadScriptPin(currentObjectId, script, currentPin, 1, 0)
+      completedItems += 1
+
+      if #workerPendingQueue > 0 then
+        local anyBusy = false
+
+        do
+          local i = 0
+
+          while i < #workerIndices do
+            if workerBusy[i + 1] then
+              anyBusy = true
+              break
+            end
+
+            i += 1
+          end
+        end
+
+        if not anyBusy and #workerPendingQueue == 0 then
+          stopParticles()
+          ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
+        end
+      end
+    end
+
+    pendingScriptIdx = #pendingScripts
+
+    return
+  end
+
   local script = pendingScripts[pendingScriptIdx + 1]
   local name = targetItemName(script)
 
@@ -782,8 +890,8 @@ function loadNextScript()
   pushStatus((("Loading " .. name) .. " into ") .. currentObjectName)
 
   ll.RemoteLoadScriptPin(currentObjectId, script, currentPin, 1, 0)
-  completedItems = completedItems + 1
-  pendingScriptIdx = pendingScriptIdx + 1
+  completedItems += 1
+  pendingScriptIdx += 1
   scriptLoadTimer = LLTimers:once(0.5, function()
     scriptLoadTimer = nil
     loadNextScript()
@@ -800,7 +908,7 @@ function patchNext()
     local pending = flushPending()
 
     if #pending > 0 then
-      pushStatus(("Auto-update: patching " .. tostring(#pending)) .. " queued object(s)...")
+      pushStatus(("Auto-update: patching " .. #pending) .. " queued object(s)...")
       startPatching(pending, nil, false)
 
       return
@@ -813,10 +921,7 @@ function patchNext()
     elseif completedItems == 0 then
       pushStatus("Patching failed. All transfers timed out.")
     else
-      pushStatus(
-        ((("Patching complete. " .. tostring(completedItems)) .. "/") .. tostring(totalItems))
-          .. " item(s) transferred."
-      )
+      pushStatus(((("Patching complete. " .. completedItems) .. "/") .. totalItems) .. " item(s) transferred.")
     end
 
     return
@@ -829,11 +934,10 @@ function patchNext()
   end
 
   currentObjectName = nextName
-  queueIndex = queueIndex + 1
+  queueIndex += 1
 
-  local ____getItemsForObject_result_1 = getItemsForObject(SELF_NAME, currentObjectName)
-  local scripts = ____getItemsForObject_result_1.scripts
-  local items = ____getItemsForObject_result_1.items
+  local _r3 = getItemsForObject(SELF_NAME, currentObjectName)
+  local scripts, items = _r3.scripts, _r3.items
   local filter = patchItemFilter[currentObjectName]
 
   if filter and #filter > 0 then
@@ -872,13 +976,12 @@ function patchNext()
       ) .. tostring(totalItems)
     ) .. "]"
   )
-  pushStatus(
-    ((((("Rezzing " .. currentObjectName) .. "... [") .. tostring(completedItems)) .. "/") .. tostring(totalItems))
-      .. "]"
-  )
+  pushStatus(((((("Rezzing " .. currentObjectName) .. "... [") .. completedItems) .. "/") .. totalItems) .. "]")
   rezWithSignedPin(currentObjectName)
 
-  local timeoutSeconds = #pendingScripts * 3.5 + #pendingItems * 1.5 + 10
+  local effectiveLoaders = if WORKERS_ENABLED and #workerIndices > 0 then #workerIndices + 1 else 1
+  local scriptBatches = math.ceil(#pendingScripts / effectiveLoaders)
+  local timeoutSeconds = scriptBatches * 3.5 + #pendingItems * 1.5 + 10
 
   timeoutTimer = LLTimers:once(timeoutSeconds, function()
     stopParticles()
@@ -888,12 +991,20 @@ function patchNext()
       scriptLoadTimer = nil
     end
 
+    workerPendingQueue = {}
+    do
+      local i = 0
+
+      while i < #workerIndices do
+        workerBusy[i + 1] = false
+        i += 1
+      end
+    end
+
     local skipped = #pendingItems - pendingItemIdx + (#pendingScripts - pendingScriptIdx)
 
     pendingItemIdx = #pendingItems
-    pushStatus(
-      ((("Timeout waiting for " .. currentObjectName) .. " (") .. tostring(skipped)) .. " item(s) skipped), derezing."
-    )
+    pushStatus(((("Timeout waiting for " .. currentObjectName) .. " (") .. skipped) .. " item(s) skipped), derezing.")
     ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
     timeoutTimer = nil
     patchNext()
@@ -914,20 +1025,17 @@ function startPatching(queue, itemFilter, resetLog)
   totalItems = 0
 
   for ____, obj in ipairs(queue) do
-    local ____getItemsForObject_result_2 = getItemsForObject(SELF_NAME, obj)
-    local scripts = ____getItemsForObject_result_2.scripts
-    local items = ____getItemsForObject_result_2.items
+    local _r4 = getItemsForObject(SELF_NAME, obj)
+    local scripts, items = _r4.scripts, _r4.items
     local filter = patchItemFilter[obj]
 
     if filter and #filter > 0 then
-      totalItems = totalItems
-        + #__TS__ArrayFilter(scripts, function(____, s)
-          return table.find(filter, s) ~= nil
-        end)
-      totalItems = totalItems
-        + #__TS__ArrayFilter(items, function(____, it)
-          return table.find(filter, it) ~= nil
-        end)
+      totalItems += #__TS__ArrayFilter(scripts, function(____, s)
+        return table.find(filter, s) ~= nil
+      end)
+      totalItems += #__TS__ArrayFilter(items, function(____, it)
+        return table.find(filter, it) ~= nil
+      end)
     else
       totalItems = totalItems + (#scripts + #items)
     end
@@ -937,7 +1045,7 @@ function startPatching(queue, itemFilter, resetLog)
     statusLog = {}
   end
 
-  pushStatus(((("Patching " .. tostring(totalItems)) .. " item(s) across ") .. tostring(#queue)) .. " object(s)...")
+  pushStatus(((("Patching " .. totalItems) .. " item(s) across ") .. #queue) .. " object(s)...")
   patchNext()
 end
 
@@ -1037,6 +1145,10 @@ pendingItems = {}
 pendingScriptIdx = 0
 pendingItemIdx = 0
 scriptLoadTimer = nil
+workerIndices = {}
+workerChannel = 0
+workerBusy = {}
+workerPendingQueue = {}
 
 --- The HTTP-in URL assigned by the simulator.
 local httpUrl = ""
@@ -1044,6 +1156,94 @@ local httpUrl = ""
 pollRequestId = ""
 pollTimer = nil
 statusLog = {}
+
+--- Computes the shared worker channel from SECRET and the linkset root key.
+local function computeWorkerChannel()
+  local hash = ll.ComputeHash((SECRET .. "|worker|") .. tostring(ll.GetLinkKey(1)), "md5")
+
+  return -tonumber(string.sub(hash, 1, 7), 16)
+end
+
+--- Scans inventory for patcher-worker[N] scripts and returns their indices.
+local function discoverWorkers()
+  if not WORKERS_ENABLED then
+    return {}
+  end
+
+  local indices = {}
+  local total = ll.GetInventoryNumber(INVENTORY_SCRIPT)
+
+  do
+    local i = 0
+
+    while i < total do
+      local name = ll.GetInventoryName(INVENTORY_SCRIPT, i + 1)
+
+      if string.find(name, "patcher-worker[", 1, true) == 1 then
+        local idx = tonumber(string.sub(name, 16, #name - 1))
+
+        if idx ~= nil then
+          indices[#indices + 1] = idx
+        end
+      end
+
+      i += 1
+    end
+  end
+
+  return indices
+end
+
+--- Verifies a truncated keyed hash signature on a payload.
+local function verifyMessage(payload, sig)
+  return string.sub(ll.ComputeHash((SECRET .. "|") .. payload, "sha256"), 1, 16) == sig
+end
+
+--- Handles a worker completion: marks idle, dispatches next script or finishes.
+local function onWorkerDone(idx, script)
+  local pos = (table.find(workerIndices, idx) or 0) - 1
+
+  if pos < 0 then
+    return
+  end
+
+  workerBusy[pos + 1] = false
+  completedItems += 1
+
+  local name = targetItemName(script)
+
+  pushStatus((("Loaded " .. name) .. " into ") .. currentObjectName)
+
+  if #workerPendingQueue > 0 then
+    local next = table.remove(workerPendingQueue, 1)
+    local nextName = targetItemName(next)
+
+    setStatus(
+      (
+        (((((currentObjectName .. "\nLoading ") .. nextName) .. "\n[") .. tostring(completedItems)) .. "/")
+        .. tostring(totalItems)
+      ) .. "]"
+    )
+    dispatchToWorker(pos, next)
+
+    return
+  end
+
+  do
+    local i = 0
+
+    while i < #workerIndices do
+      if workerBusy[i + 1] then
+        return
+      end
+
+      i += 1
+    end
+  end
+
+  stopParticles()
+  ll.RegionSayTo(currentObjectId, COMM_CHANNEL, "done")
+end
 
 --- Transfers pending items one at a time using a remove-then-give protocol.
 -- Sends "remove|name" to the bootstrap, waits for "removed", then gives
@@ -1090,11 +1290,11 @@ local function startCleanup(objectNames)
   cleanupObjects = {}
   cleanupPinnedCount = 0
   completedItems = 0
-  pushStatus(("Cleaning up " .. tostring(#objectNames)) .. " object(s)...")
+  pushStatus(("Cleaning up " .. #objectNames) .. " object(s)...")
 
   for ____, name in ipairs(objectNames) do
-    local ____generateSignedPin_result_3 = generateSignedPin()
-    local startString = ____generateSignedPin_result_3.startString
+    local _r5 = generateSignedPin()
+    local startString = _r5.startString
     local id = ll.RezObjectWithParams(name, {
       REZ_POS,
       vector.create(0, 0, 1),
@@ -1203,12 +1403,11 @@ LLEvents:on("http_request", function(requestId, method, body)
         return
       end
 
-      local ____parseFormItems_result_4 = parseFormItems(body)
-      local queue = ____parseFormItems_result_4.queue
-      local filter = ____parseFormItems_result_4.filter
+      local _r6 = parseFormItems(body)
+      local queue, filter = _r6.queue, _r6.filter
 
       if #queue == 0 then
-        respondHtml(requestId, "<strong>No items selected</strong>")
+        respondHtml(requestId, NO_ITEMS_SELECTED)
 
         return
       end
@@ -1226,9 +1425,8 @@ LLEvents:on("http_request", function(requestId, method, body)
       local queue = {}
 
       for ____, obj in ipairs(getObjectNames()) do
-        local ____getItemsForObject_result_5 = getItemsForObject(SELF_NAME, obj)
-        local scripts = ____getItemsForObject_result_5.scripts
-        local items = ____getItemsForObject_result_5.items
+        local _r7 = getItemsForObject(SELF_NAME, obj)
+        local scripts, items = _r7.scripts, _r7.items
 
         if #scripts > 0 or #items > 0 then
           queue[#queue + 1] = obj
@@ -1303,7 +1501,7 @@ LLEvents:on("listen", function(channel, _name, id, message)
         if seconds ~= nil and seconds >= 1 then
           setDebounceSeconds(seconds)
           enableAutoUpdate()
-          ll.OwnerSay(("Auto-update enabled (" .. tostring(seconds)) .. "s debounce).")
+          ll.OwnerSay(("Auto-update enabled (" .. seconds) .. "s debounce).")
         else
           ll.OwnerSay("Usage: /7 auto [seconds]")
         end
@@ -1312,7 +1510,7 @@ LLEvents:on("listen", function(channel, _name, id, message)
         ll.OwnerSay("Auto-update disabled.")
       else
         enableAutoUpdate()
-        ll.OwnerSay(("Auto-update enabled (" .. tostring(getDebounceSeconds())) .. "s debounce).")
+        ll.OwnerSay(("Auto-update enabled (" .. getDebounceSeconds()) .. "s debounce).")
       end
     end
   elseif channel == COMM_CHANNEL and busy then
@@ -1321,11 +1519,9 @@ LLEvents:on("listen", function(channel, _name, id, message)
 
       if entry and not entry.pinned then
         entry.pinned = true
-        cleanupPinnedCount = cleanupPinnedCount + 1
-        completedItems = completedItems + 1
-        logStatus(
-          ((((entry.name .. " pinned. [") .. tostring(cleanupPinnedCount)) .. "/") .. tostring(#cleanupObjects)) .. "]"
-        )
+        cleanupPinnedCount += 1
+        completedItems += 1
+        logStatus(((((entry.name .. " pinned. [") .. cleanupPinnedCount) .. "/") .. #cleanupObjects) .. "]")
 
         if cleanupPinnedCount >= #cleanupObjects then
           onAllPinned()
@@ -1346,25 +1542,27 @@ LLEvents:on("listen", function(channel, _name, id, message)
 
         if not bootstrapUpgraded and hasBootstrap then
           bootstrapUpgraded = true
-          pushStatus(("Upgrading bootstrap in " .. currentObjectName) .. "...")
+
+          pushStatus(("Upgrading patcher-bootstrap in " .. currentObjectName) .. "...")
 
           ll.RemoteLoadScriptPin(currentObjectId, BOOTSTRAP_NAME, currentPin, 1, 0)
           ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
-          queueIndex = queueIndex - 1
+
+          queueIndex -= 1
 
           LLTimers:once(1, function()
             return patchNext()
           end)
         else
-          local hint = if not hasBootstrap then ' Add "bootstrap" script to auto-upgrade.' else ""
+          local hint = if not hasBootstrap then (' Add "' .. BOOTSTRAP_NAME) .. '" script to auto-upgrade.' else ""
 
-          pushStatus((("Outdated bootstrap in " .. currentObjectName) .. ", skipping.") .. hint)
+          pushStatus((("Outdated patcher-bootstrap in " .. currentObjectName) .. ", skipping.") .. hint)
           ll.DerezObject(currentObjectId, DEREZ_TO_INVENTORY)
           patchNext()
         end
       else
         if bootstrapUpgraded then
-          pushStatus(("Bootstrap upgraded in " .. currentObjectName) .. ".")
+          pushStatus(("Patcher-bootstrap upgraded in " .. currentObjectName) .. ".")
         end
 
         startParticles(currentObjectId)
@@ -1375,8 +1573,8 @@ LLEvents:on("listen", function(channel, _name, id, message)
       local item = pendingItems[pendingItemIdx + 1]
 
       ll.GiveInventory(currentObjectId, item)
-      completedItems = completedItems + 1
-      pendingItemIdx = pendingItemIdx + 1
+      completedItems += 1
+      pendingItemIdx += 1
       giveNextItem()
     elseif message == "cleaned" and finishing then
       local entry = findCleanupEntry(id)
@@ -1402,8 +1600,43 @@ LLEvents:on("listen", function(channel, _name, id, message)
   end
 end)
 
+if WORKERS_ENABLED then
+  LLEvents:on("link_message", function(_sender, num, str, key)
+    if num ~= workerChannel or not busy or finishing then
+      return
+    end
+
+    local parts = string.split(str, "|")
+
+    if #parts < 4 or parts[1] ~= "done" then
+      return
+    end
+
+    local idx = tonumber(parts[2])
+
+    if idx == nil or not (table.find(workerIndices, idx) ~= nil) then
+      return
+    end
+
+    local scriptName = parts[3]
+    local signature = parts[4]
+    local targetId = key
+    local expectedPayload = (((("done|" .. parts[2]) .. "|") .. scriptName) .. "|") .. tostring(targetId)
+
+    if not verifyMessage(expectedPayload, signature) then
+      return
+    end
+
+    onWorkerDone(idx, scriptName)
+  end)
+end
+
 LLEvents:on("on_rez", function()
   refreshUrl()
+
+  if WORKERS_ENABLED and #workerIndices > 0 then
+    workerChannel = computeWorkerChannel()
+  end
 end)
 
 LLEvents:on("attach", function()
@@ -1413,6 +1646,7 @@ end)
 LLEvents:on("changed", function(change)
   if bit32.btest(change, CHANGED_INVENTORY) then
     onInventoryChanged()
+    workerIndices = discoverWorkers()
   end
 
   if bit32.btest(change, bit32.bor(CHANGED_REGION, CHANGED_REGION_START)) then
@@ -1423,6 +1657,22 @@ end)
 ll.Listen(CMD_CHANNEL, "", NULL_KEY, "")
 ll.Listen(COMM_CHANNEL, "", NULL_KEY, "")
 ll.RequestURL()
+workerIndices = discoverWorkers()
+
+if #workerIndices > 0 then
+  workerChannel = computeWorkerChannel()
+  workerBusy = {}
+  do
+    local i = 0
+
+    while i < #workerIndices do
+      workerBusy[#workerBusy + 1] = false
+      i += 1
+    end
+  end
+
+  ll.OwnerSay(("Workers: " .. #workerIndices) .. " patcher-worker script(s) detected.")
+end
 
 setupAutoUpdate(SELF_NAME, startPatching, function()
   return busy
@@ -1432,10 +1682,5 @@ do
   local used = ll.GetUsedMemory()
   local limit = ll.GetMemoryLimit()
 
-  ll.OwnerSay(
-    (
-      (((("Memory: " .. tostring(used // 1024)) .. "KB / ") .. tostring(limit // 1024)) .. "KB (")
-      .. tostring(math.floor(used / limit * 100))
-    ) .. "%)"
-  )
+  ll.OwnerSay(((((("Memory: " .. used // 1024) .. "KB / ") .. limit // 1024) .. "KB (") .. used * 100 // limit) .. "%)")
 end

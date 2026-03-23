@@ -1,0 +1,95 @@
+--[[
+SLua Derez Patcher — worker script for parallel script loading
+
+Place copies of this script (named "patcher-worker[1]", "patcher-worker[2]",
+etc.) in the same prim as the patcher. Each worker listens for load
+commands via link_message and calls ll.RemoteLoadScriptPin in parallel,
+reducing total patch time from N*3s to ceil(N/W)*3s.
+
+@version 0.1.0
+@link https://github.com/gwigz/slua-derez-patcher
+]]
+
+--- Shared secret for signing dynamic script access pins.
+local SECRET = "slua-derez-patcher"
+
+--[[ Generated with @gwigz/slua - https://github.com/gwigz/slua ]]
+--- This worker's index, extracted from the script name (e.g. "patcher-worker[1]" -> 1).
+local SCRIPT_NAME = ll.GetScriptName()
+local WORKER_INDEX = tonumber(string.sub(SCRIPT_NAME, 16, #SCRIPT_NAME - 1))
+
+--- Cached worker channel, derived from SECRET + linkset root key. Reset on rez.
+local workerChannel = 0
+
+--- Computes the shared worker channel from SECRET and the linkset root key.
+local function computeWorkerChannel()
+  local hash = ll.ComputeHash((SECRET .. "|worker|") .. tostring(ll.GetLinkKey(1)), "md5")
+
+  return -tonumber(string.sub(hash, 1, 7), 16)
+end
+
+--- Derives a deterministic pin from a nonce, matching the patcher's derivation.
+local function derivePin(nonce)
+  local hash = ll.ComputeHash((SECRET .. "|") .. tostring(nonce), "sha256")
+
+  return tonumber(string.sub(hash, 1, 8), 16) % 2147483646 + 1
+end
+
+--- Verifies a truncated keyed hash signature on a payload.
+local function verifyMessage(payload, sig)
+  return string.sub(ll.ComputeHash((SECRET .. "|") .. payload, "sha256"), 1, 16) == sig
+end
+
+--- Signs a payload with a truncated keyed hash.
+local function signMessage(payload)
+  return string.sub(ll.ComputeHash((SECRET .. "|") .. payload, "sha256"), 1, 16)
+end
+
+LLEvents:on("link_message", function(_sender, num, str, key)
+  if num ~= workerChannel then
+    return
+  end
+
+  local parts = string.split(str, "|")
+
+  if #parts < 5 or parts[1] ~= "load" then
+    return
+  end
+
+  local idx = tonumber(parts[2])
+
+  if idx ~= WORKER_INDEX then
+    return
+  end
+
+  local scriptName = parts[3]
+  local nonce = parts[4]
+  local signature = parts[5]
+  local targetId = key
+  local expectedPayload = (((((("load|" .. parts[2]) .. "|") .. scriptName) .. "|") .. tostring(nonce)) .. "|")
+    .. tostring(targetId)
+
+  if not verifyMessage(expectedPayload, signature) then
+    return
+  end
+
+  local pin = derivePin(nonce)
+
+  ll.RemoteLoadScriptPin(targetId, scriptName, pin, 1, 0)
+
+  local donePayload = (((("done|" .. parts[2]) .. "|") .. scriptName) .. "|") .. tostring(targetId)
+  local doneSig = signMessage(donePayload)
+
+  ll.MessageLinked(
+    LINK_THIS,
+    workerChannel,
+    (((("done|" .. parts[2]) .. "|") .. scriptName) .. "|") .. doneSig,
+    targetId
+  )
+end)
+
+LLEvents:on("on_rez", function()
+  workerChannel = computeWorkerChannel()
+end)
+
+workerChannel = computeWorkerChannel()
